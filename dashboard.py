@@ -26,6 +26,7 @@ from scipy.ndimage import zoom
 # Import PhaseGuard helper modules
 from preprocess import load_and_standardize, audio_to_mel_spectrogram, extract_5_signals
 from train_layer1 import PhaseGuardL1
+from audio_recorder_streamlit import audio_recorder
 
 # ==========================================
 # PAGE CONFIGURATION & THEME
@@ -247,9 +248,399 @@ def analyze_voice_clip(audio_path, l1_model, l1_thresh, enable_overrides=True):
         'y_full': y_full if y_full is not None else audio,
     }
 
-# ==========================================
-# HEADER
-# ==========================================
+
+def render_analysis_dashboard(results, l1_threshold):
+    # ---- VERDICT BANNER ----
+    rl = results['risk_level']
+    cert = results['risk_score'] if results['layer1_blocked'] else 100 - results['risk_score']
+    if rl == "CLEAN":
+        st.markdown(f'<div class="verdict-card verdict-clean">✅ REAL HUMAN VOICE &nbsp;·&nbsp; {cert:.1f}% Certainty</div>', unsafe_allow_html=True)
+    elif rl == "SUSPICIOUS":
+        st.markdown(f'<div class="verdict-card verdict-suspicious">⚠️ SUSPICIOUS — VERIFY CALLER &nbsp;·&nbsp; {results["risk_score"]:.1f}% AI Probability</div>', unsafe_allow_html=True)
+    elif rl == "HIGH RISK":
+        st.markdown(f'<div class="verdict-card verdict-suspicious">🟠 HIGH RISK DEEPFAKE &nbsp;·&nbsp; {results["risk_score"]:.1f}% AI Probability</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(f'<div class="verdict-card verdict-fraud">🚨 FAKE / AI VOICE CLONE &nbsp;·&nbsp; {cert:.1f}% Certainty</div>', unsafe_allow_html=True)
+
+    # ---- OVERRIDE BANNER ----
+    if results['override_reason']:
+        st.warning(f"⚡ Physics Override Applied: {results['override_reason']}")
+        col_cnn, col_final = st.columns(2)
+        col_cnn.metric("CNN Raw Output", f"{results['raw_cnn']*100:.2f}%", help="MobileNetV3 sigmoid raw score")
+        col_final.metric("Final AI Probability (after override)", f"{results['ai_probability']*100:.2f}%")
+    else:
+        st.metric("CNN Output = Final AI Probability", f"{results['raw_cnn']*100:.2f}%")
+
+    st.divider()
+
+    # ---- GAUGE + RADAR ----
+    col_gauge, col_radar = st.columns(2)
+
+    with col_gauge:
+        st.markdown("#### 🎯 AI Probability Gauge")
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=results['ai_probability'] * 100,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            title={'text': "AI Voice Probability (%)", 'font': {'size': 16, 'color': 'white'}},
+            number={'font': {'color': '#f43f5e' if results['layer1_blocked'] else '#10b981', 'size': 40}},
+            gauge={
+                'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#475569"},
+                'bar': {'color': "#f43f5e" if results['layer1_blocked'] else "#10b981"},
+                'bgcolor': "rgba(0,0,0,0)",
+                'borderwidth': 1,
+                'bordercolor': "rgba(255,255,255,0.1)",
+                'steps': [
+                    {'range': [0, 30], 'color': 'rgba(16, 185, 129, 0.12)'},
+                    {'range': [30, 60], 'color': 'rgba(245, 158, 11, 0.10)'},
+                    {'range': [60, 100], 'color': 'rgba(244, 63, 94, 0.12)'},
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 3},
+                    'thickness': 0.75,
+                    'value': l1_threshold * 100
+                }
+            }
+        ))
+        fig_gauge.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            font={'color': 'white', 'family': 'Outfit'},
+            height=280,
+            margin=dict(l=20, r=20, t=60, b=20)
+        )
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+    with col_radar:
+        st.markdown("#### 🕸️ Signal Radar vs Real/AI Reference")
+        sigs = results['signals']
+
+        # Normalize signals 0-1 for radar (higher = more AI-like)
+        def norm_pjr(v): return min(v / 0.20, 1.0)                  # 0→0, 0.20→1
+        def norm_jitter_ai(v): return 1.0 - min(max((v - 0.0012) / (0.055 - 0.0012), 0), 1)  # low jitter = high AI
+        def norm_noise_ai(v): return max(1.0 - v / 0.005, 0.0)      # near-zero noise = high AI
+        def norm_flat(v): return min(v / 0.10, 1.0)
+        def norm_mfcc_ai(v): return 1.0 - min(abs(v - 30) / 90, 1.0)  # rigid MFCC = high AI
+
+        user_vals = [
+            norm_pjr(sigs['phase_jump_rate']),
+            norm_jitter_ai(sigs['jitter']),
+            norm_noise_ai(sigs['noise_floor']),
+            norm_flat(sigs['spectral_flatness']),
+            norm_mfcc_ai(sigs['mfcc_delta_var']),
+        ]
+        real_ref = [0.10, 0.15, 0.20, 0.20, 0.15]
+        fake_ref = [0.85, 0.90, 0.90, 0.55, 0.75]
+        categories = ['Phase Jump', 'Jitter (AI)', 'Noise Floor (AI)', 'Spectral Flat', 'MFCC Rigid']
+
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(
+            r=real_ref + [real_ref[0]],
+            theta=categories + [categories[0]],
+            fill='toself',
+            name='Typical REAL',
+            line=dict(color='#10b981', width=2),
+            fillcolor='rgba(16, 185, 129, 0.08)'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=fake_ref + [fake_ref[0]],
+            theta=categories + [categories[0]],
+            fill='toself',
+            name='Typical AI FAKE',
+            line=dict(color='#f43f5e', width=2),
+            fillcolor='rgba(244, 63, 94, 0.08)'
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=user_vals + [user_vals[0]],
+            theta=categories + [categories[0]],
+            fill='toself',
+            name='Your Audio',
+            line=dict(color='#a855f7', width=3),
+            fillcolor='rgba(168, 85, 247, 0.15)'
+        ))
+        fig_radar.update_layout(
+            polar=dict(
+                bgcolor='rgba(0,0,0,0)',
+                radialaxis=dict(visible=True, range=[0, 1], color='#475569', gridcolor='rgba(255,255,255,0.06)'),
+                angularaxis=dict(color='#94a3b8', gridcolor='rgba(255,255,255,0.06)')
+            ),
+            showlegend=True,
+            legend=dict(font=dict(color='white', size=11), bgcolor='rgba(0,0,0,0)'),
+            paper_bgcolor='rgba(0,0,0,0)',
+            font={'color': 'white', 'family': 'Outfit'},
+            height=280,
+            margin=dict(l=50, r=50, t=20, b=20)
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+
+    st.divider()
+
+    # ---- 5 SIGNAL TELEMETRY ----
+    st.markdown("### 📡 5-Signal Telemetry Board")
+    st.caption("Each signal measured from your audio vs typical human / AI ranges.")
+
+    sigs = results['signals']
+    c_phase = "anomaly" if sigs['phase_jump_rate'] > 0.08 else "normal"
+    c_jitter = "anomaly" if (sigs['jitter'] < 0.0012 or sigs['jitter'] > 0.055) else "normal"
+    c_flat = "anomaly" if sigs['spectral_flatness'] > 0.05 else "normal"
+    c_noise = "anomaly" if sigs['noise_floor'] < 0.0005 else "normal"
+    c_delta = "anomaly" if sigs['mfcc_delta_var'] < 5.0 or sigs['mfcc_delta_var'] > 120.0 else "normal"
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.markdown(f"""<div class="sensor-card">
+        <div class="sensor-title">⚡ Phase Jump Rate</div>
+        <div class="sensor-value" style="color: {'#f43f5e' if c_phase=='anomaly' else '#10b981'}">{sigs['phase_jump_rate']:.4f}</div>
+        <div class="sensor-status-{c_phase}">{'Vocoder Seams' if c_phase=='anomaly' else 'Smooth Flow'}</div>
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &lt; 0.11</div>
+    </div>""", unsafe_allow_html=True)
+
+    col2.markdown(f"""<div class="sensor-card">
+        <div class="sensor-title">🎙️ Pitch Jitter</div>
+        <div class="sensor-value" style="color: {'#f43f5e' if c_jitter=='anomaly' else '#10b981'}">{sigs['jitter']:.5f}</div>
+        <div class="sensor-status-{c_jitter}">{'AI Artifact' if c_jitter=='anomaly' else 'Organic Jitter'}</div>
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: 0.0015–0.050</div>
+    </div>""", unsafe_allow_html=True)
+
+    col3.markdown(f"""<div class="sensor-card">
+        <div class="sensor-title">🎚️ Spectral Flatness</div>
+        <div class="sensor-value" style="color: {'#f43f5e' if c_flat=='anomaly' else '#10b981'}">{sigs['spectral_flatness']:.4f}</div>
+        <div class="sensor-status-{c_flat}">{'Synthetic' if c_flat=='anomaly' else 'Vocal Formants'}</div>
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &lt; 0.05</div>
+    </div>""", unsafe_allow_html=True)
+
+    col4.markdown(f"""<div class="sensor-card">
+        <div class="sensor-title">🔌 Noise Floor (RMS)</div>
+        <div class="sensor-value" style="color: {'#f43f5e' if c_noise=='anomaly' else '#10b981'}">{sigs['noise_floor']:.6f}</div>
+        <div class="sensor-status-{c_noise}">{'Digital Silence' if c_noise=='anomaly' else 'Natural Room Noise'}</div>
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &gt; 0.002</div>
+    </div>""", unsafe_allow_html=True)
+
+    col5.markdown(f"""<div class="sensor-card">
+        <div class="sensor-title">📊 MFCC Delta Var</div>
+        <div class="sensor-value" style="color: {'#f43f5e' if c_delta=='anomaly' else '#10b981'}">{sigs['mfcc_delta_var']:.2f}</div>
+        <div class="sensor-status-{c_delta}">{'Rigid/Abrupt' if c_delta=='anomaly' else 'Dynamic Range'}</div>
+        <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: 5 – 120</div>
+    </div>""", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ---- WHY REAL / WHY FAKE EXPLANATION CARDS ----
+    st.markdown("### 🔬 Signal-by-Signal Explanation")
+
+    def explain_card(title, value_str, verdict, explanation, card_type):
+        color = "#f43f5e" if card_type == "fake" else ("#10b981" if card_type == "real" else "#3b82f6")
+        icon = "🔴" if card_type == "fake" else ("🟢" if card_type == "real" else "🔵")
+        return f"""<div class="explain-card explain-card-{card_type}">
+            <strong style="color:{color}">{icon} {title}</strong><br>
+            <span style="font-family:'JetBrains Mono',monospace;font-size:0.9rem">{value_str}</span><br>
+            <span style="color:#94a3b8;font-size:0.88rem">{verdict} — {explanation}</span>
+        </div>"""
+
+    # Phase Jump Rate explanation
+    pjr = sigs['phase_jump_rate']
+    if pjr > 0.08:
+        pjr_html = explain_card("Phase Jump Rate", f"{pjr:.4f}",
+            "⚠️ ELEVATED",
+            "AI vocoders generate speech frame-by-frame (every 20ms). Each frame boundary causes a sudden phase discontinuity — a \"seam\" invisible to ears but measurable mathematically. Real vocal cords produce continuous phase flow.",
+            "fake")
+    else:
+        pjr_html = explain_card("Phase Jump Rate", f"{pjr:.4f}",
+            "✅ NORMAL",
+            "Phase transitions are smooth and continuous — consistent with a real human vocal tract producing uninterrupted airflow through vibrating cords.",
+            "real")
+
+    # Jitter explanation
+    jitter = sigs['jitter']
+    if jitter < 0.0012:
+        jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
+            "⚠️ TOO FLAT (Robotic)",
+            "Jitter is near-zero, meaning pitch is unnaturally constant. Human vocal cords have micro-tremors that cause slight frequency wobble. AI TTS systems tend to produce perfectly flat pitch — a telltale digital artifact.",
+            "fake")
+    elif jitter > 0.055:
+        jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
+            "⚠️ TOO ERRATIC (Synthetic noise)",
+            "Jitter exceeds normal human range. This level of pitch variation is characteristic of poorly calibrated TTS vocoders or voice conversion artifacts that introduce random noise into pitch modulation.",
+            "fake")
+    else:
+        jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
+            "✅ ORGANIC",
+            "Pitch varies naturally within the human biological range. This is consistent with muscle micro-tremors in real vocal cords — a difficult-to-fake biometric.",
+            "real")
+
+    # Noise floor explanation
+    nf = sigs['noise_floor']
+    if nf < 0.0005:
+        nf_html = explain_card("Noise Floor (RMS)", f"{nf:.6f}",
+            "⚠️ DIGITAL SILENCE",
+            "Near-zero energy in the quietest frames. Real recordings always contain room noise, breath sounds, or mic hiss. This near-perfect silence is a strong indicator of a digitally synthesized voice played from a device.",
+            "fake")
+    else:
+        nf_html = explain_card("Noise Floor (RMS)", f"{nf:.6f}",
+            "✅ NATURAL",
+            "Background energy is present, consistent with real-world recording conditions (room acoustics, microphone hiss, or environmental noise). AI-generated voices typically have near-zero background energy.",
+            "real")
+
+    # Spectral flatness explanation
+    sf_val = sigs['spectral_flatness']
+    if sf_val > 0.05:
+        sf_html = explain_card("Spectral Flatness", f"{sf_val:.4f}",
+            "⚠️ FLAT SPECTRUM",
+            "Frequency energy is unusually spread (noise-like). Real speech has strong formant peaks (F1, F2, F3) giving it a non-flat spectrum. Excessive flatness suggests synthetic smoothing by a TTS model.",
+            "fake")
+    else:
+        sf_html = explain_card("Spectral Flatness", f"{sf_val:.4f}",
+            "✅ HARMONIC",
+            "Strong harmonic content with clear formant structure — consistent with real speech resonating in a human vocal tract.",
+            "real")
+
+    # MFCC explanation
+    mdv = sigs['mfcc_delta_var']
+    if mdv < 5.0:
+        mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
+            "⚠️ RIGID",
+            "Spectral texture transitions too slowly. This indicates a voice that doesn't change its mouth/throat shape naturally — a sign of rigid AI generation.",
+            "fake")
+    elif mdv > 120.0:
+        mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
+            "⚠️ ABRUPT JUMPS",
+            "Spectral texture changes violently between frames — consistent with vocoder frame boundary artifacts creating sudden discontinuities.",
+            "fake")
+    else:
+        mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
+            "✅ DYNAMIC",
+            "Spectral texture transitions vary naturally — consistent with continuous articulation of a real human speaker.",
+            "real")
+
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        st.markdown(pjr_html, unsafe_allow_html=True)
+        st.markdown(jit_html, unsafe_allow_html=True)
+        st.markdown(nf_html, unsafe_allow_html=True)
+    with col_exp2:
+        st.markdown(sf_html, unsafe_allow_html=True)
+        st.markdown(mfcc_html, unsafe_allow_html=True)
+
+    st.divider()
+
+    # ---- VISUAL CHARTS ----
+    st.markdown("### 📈 Acoustic Visualizations")
+    col_w, col_s = st.columns(2)
+
+    with col_w:
+        st.markdown("**Waveform + RMS Energy (10th Pct = Noise Floor)**")
+        y_disp = results['audio']
+        t = np.arange(len(y_disp)) / 16000
+        rms_frames = librosa.feature.rms(y=y_disp, frame_length=512, hop_length=160)[0]
+        t_rms = librosa.frames_to_time(np.arange(len(rms_frames)), sr=16000, hop_length=160)
+
+        fig_wave = go.Figure()
+        fig_wave.add_trace(go.Scatter(
+            x=t, y=y_disp, name="Waveform",
+            line=dict(color='rgba(59, 130, 246, 0.5)', width=0.8)
+        ))
+        fig_wave.add_trace(go.Scatter(
+            x=t_rms, y=rms_frames, name="RMS Energy",
+            line=dict(color='#a855f7', width=2)
+        ))
+        nf_val = float(np.percentile(rms_frames, 10))
+        fig_wave.add_hline(
+            y=nf_val, line_dash="dot", line_color="#f43f5e",
+            annotation_text=f"Noise Floor: {nf_val:.6f}",
+            annotation_font_color="#f43f5e"
+        )
+        fig_wave.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font={'color': 'white', 'family': 'Outfit'},
+            height=260, margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(bgcolor='rgba(0,0,0,0)', font=dict(size=11))
+        )
+        fig_wave.update_xaxes(title="Time (s)", color="#475569", showgrid=False)
+        fig_wave.update_yaxes(title="Amplitude", color="#475569", gridcolor="rgba(255,255,255,0.05)")
+        st.plotly_chart(fig_wave, use_container_width=True)
+
+    with col_s:
+        st.markdown("**Mel-Spectrogram (128×128 CNN Input)**")
+        fig_spec = px.imshow(
+            results['mel_spectrogram'],
+            labels=dict(x="Time Frames", y="Mel Frequency Bins"),
+            color_continuous_scale='Viridis',
+            aspect='auto'
+        )
+        fig_spec.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+            font={'color': 'white', 'family': 'Outfit'},
+            height=260, margin=dict(l=0, r=0, t=10, b=0),
+            coloraxis_showscale=False
+        )
+        st.plotly_chart(fig_spec, use_container_width=True)
+
+    # ---- PHASE JUMP HEATMAP ----
+    st.markdown("**Phase Acceleration Heatmap (2nd-order Phase Difference — AI Seams Visible as Bright Bands)**")
+    y_phase = results['y_full']
+    stft = librosa.stft(y_phase, n_fft=512, hop_length=160)
+    phase = np.angle(stft)
+    pd1 = np.diff(phase, axis=1)
+    pd1w = np.arctan2(np.sin(pd1), np.cos(pd1))
+    pd2 = np.diff(pd1w, axis=1)
+    pd2w = np.arctan2(np.sin(pd2), np.cos(pd2))
+    heatmap_data = np.abs(pd2w[:96, :])   # voiced range only
+
+    fig_phase = px.imshow(
+        heatmap_data,
+        labels=dict(x="Time Frames", y="Frequency Bins (0–3kHz)"),
+        color_continuous_scale=[
+            [0, "#0d0d15"], [0.4, "#2563eb"], [0.7, "#7c3aed"], [1.0, "#f43f5e"]
+        ],
+        aspect='auto',
+        zmin=0, zmax=np.pi
+    )
+    fig_phase.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white', 'family': 'Outfit'},
+        height=200, margin=dict(l=0, r=0, t=10, b=0),
+        coloraxis_colorbar=dict(title="Phase Accel (rad)", tickfont=dict(color='white'))
+    )
+    st.plotly_chart(fig_phase, use_container_width=True)
+    st.caption("🔴 Bright vertical bands = sudden phase jumps at vocoder frame boundaries. Real human voices show uniform low-level noise. AI voices show structured red bands.")
+
+    # ---- SIGNAL BAR CHART ----
+    st.markdown("**Signal Comparison: Your Audio vs Typical Real / AI Ranges**")
+    bar_signals = ['Phase Jump Rate', 'Pitch Jitter ×100', 'Noise Floor ×1000', 'Spectral Flatness', 'MFCC δVar ÷10']
+    bar_user = [
+        sigs['phase_jump_rate'],
+        sigs['jitter'] * 100,
+        sigs['noise_floor'] * 1000,
+        sigs['spectral_flatness'],
+        sigs['mfcc_delta_var'] / 10
+    ]
+    bar_real_max = [0.11, 5.0, 5.0, 0.05, 12.0]
+    bar_fake_min = [0.08, 0.0, 0.0, 0.05, 0.0]
+
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(
+        name="Your Audio",
+        x=bar_signals, y=bar_user,
+        marker_color=['#f43f5e' if results['layer1_blocked'] else '#10b981'] * 5,
+        opacity=0.85
+    ))
+    fig_bar.add_trace(go.Bar(
+        name="Typical Real Upper Limit",
+        x=bar_signals, y=bar_real_max,
+        marker_color='rgba(16,185,129,0.2)',
+        marker_line=dict(color='#10b981', width=2)
+    ))
+    fig_bar.update_layout(
+        barmode='group',
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white', 'family': 'Outfit'},
+        height=280, margin=dict(l=0, r=0, t=10, b=0),
+        legend=dict(bgcolor='rgba(0,0,0,0)', font=dict(size=11)),
+        xaxis=dict(color='#475569', showgrid=False),
+        yaxis=dict(color='#475569', gridcolor='rgba(255,255,255,0.05)')
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+
 st.markdown("""
 <div class="title-banner">
     <h1 style="margin: 0; font-size: 2.5rem; font-weight: 800; background: linear-gradient(to right, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">🛡️ PhaseGuard — Layer 1</h1>
@@ -303,7 +694,7 @@ with st.sidebar:
 # ==========================================
 # TABS
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["📁 Upload & Analyse", "🎙️ Pre-loaded Samples", "📚 How It Works"])
+tab1, tab_record, tab2, tab3 = st.tabs(["📁 Upload & Analyse", "🎤 Record Live Voice", "🎙️ Pre-loaded Samples", "📚 How It Works"])
 
 # ------------------------------------------
 # TAB 1: FILE UPLOAD
@@ -345,396 +736,217 @@ with tab1:
             prog.empty()
             os.unlink(tmp_path)
 
-            # ---- VERDICT BANNER ----
-            rl = results['risk_level']
-            cert = results['risk_score'] if results['layer1_blocked'] else 100 - results['risk_score']
-            if rl == "CLEAN":
-                st.markdown(f'<div class="verdict-card verdict-clean">✅ REAL HUMAN VOICE &nbsp;·&nbsp; {cert:.1f}% Certainty</div>', unsafe_allow_html=True)
-            elif rl == "SUSPICIOUS":
-                st.markdown(f'<div class="verdict-card verdict-suspicious">⚠️ SUSPICIOUS — VERIFY CALLER &nbsp;·&nbsp; {results["risk_score"]:.1f}% AI Probability</div>', unsafe_allow_html=True)
-            elif rl == "HIGH RISK":
-                st.markdown(f'<div class="verdict-card verdict-suspicious">🟠 HIGH RISK DEEPFAKE &nbsp;·&nbsp; {results["risk_score"]:.1f}% AI Probability</div>', unsafe_allow_html=True)
-            else:
-                st.markdown(f'<div class="verdict-card verdict-fraud">🚨 FAKE / AI VOICE CLONE &nbsp;·&nbsp; {cert:.1f}% Certainty</div>', unsafe_allow_html=True)
+            render_analysis_dashboard(results, l1_threshold)
 
-            # ---- OVERRIDE BANNER ----
-            if results['override_reason']:
-                st.warning(f"⚡ Physics Override Applied: {results['override_reason']}")
-                col_cnn, col_final = st.columns(2)
-                col_cnn.metric("CNN Raw Output", f"{results['raw_cnn']*100:.2f}%", help="MobileNetV3 sigmoid raw score")
-                col_final.metric("Final AI Probability (after override)", f"{results['ai_probability']*100:.2f}%")
-            else:
-                st.metric("CNN Output = Final AI Probability", f"{results['raw_cnn']*100:.2f}%")
 
-            st.divider()
+# ------------------------------------------
+# TAB 1.5: RECORD LIVE VOICE
+# ------------------------------------------
+with tab_record:
+    st.subheader("🎤 Live Voice Recording — Real-Time PhaseGuard Scan")
 
-            # ---- GAUGE + RADAR ----
-            col_gauge, col_radar = st.columns(2)
+    # ---- Scenario Cards ----
+    st.markdown("### 🧪 What to Test")
+    col_la, col_pa = st.columns(2)
+    with col_la:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, rgba(244,63,94,0.12), rgba(239,68,68,0.05));
+                    border: 1px solid rgba(244,63,94,0.4); border-radius: 14px; padding: 18px;">
+            <h4 style="color:#f43f5e; margin:0 0 8px 0;">📱 LA Attack — AI Voice from Phone</h4>
+            <p style="color:#94a3b8; font-size:0.9rem; margin:0;">
+                Open an AI-cloned voice (ElevenLabs, HuggingFace TTS, etc.) on your phone.<br><br>
+                Hold the phone near your microphone and play it. The model will detect 
+                <strong style="color:#f43f5e;">digital silence + vocoder phase artifacts</strong> 
+                and flag it as <strong style="color:#f43f5e;">FAKE / AI VOICE CLONE</strong>.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-            with col_gauge:
-                st.markdown("#### 🎯 AI Probability Gauge")
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=results['ai_probability'] * 100,
-                    domain={'x': [0, 1], 'y': [0, 1]},
-                    title={'text': "AI Voice Probability (%)", 'font': {'size': 16, 'color': 'white'}},
-                    number={'font': {'color': '#f43f5e' if results['layer1_blocked'] else '#10b981', 'size': 40}},
-                    gauge={
-                        'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#475569"},
-                        'bar': {'color': "#f43f5e" if results['layer1_blocked'] else "#10b981"},
-                        'bgcolor': "rgba(0,0,0,0)",
-                        'borderwidth': 1,
-                        'bordercolor': "rgba(255,255,255,0.1)",
-                        'steps': [
-                            {'range': [0, 30], 'color': 'rgba(16, 185, 129, 0.12)'},
-                            {'range': [30, 60], 'color': 'rgba(245, 158, 11, 0.10)'},
-                            {'range': [60, 100], 'color': 'rgba(244, 63, 94, 0.12)'},
-                        ],
-                        'threshold': {
-                            'line': {'color': "white", 'width': 3},
-                            'thickness': 0.75,
-                            'value': l1_threshold * 100
-                        }
-                    }
-                ))
-                fig_gauge.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font={'color': 'white', 'family': 'Outfit'},
-                    height=280,
-                    margin=dict(l=20, r=20, t=60, b=20)
-                )
-                st.plotly_chart(fig_gauge, use_container_width=True)
+    with col_pa:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, rgba(16,185,129,0.12), rgba(52,211,153,0.05));
+                    border: 1px solid rgba(16,185,129,0.4); border-radius: 14px; padding: 18px;">
+            <h4 style="color:#10b981; margin:0 0 8px 0;">🎤 Real Voice — Speak Directly</h4>
+            <p style="color:#94a3b8; font-size:0.9rem; margin:0;">
+                Simply speak naturally into your microphone — say anything for at least 2 seconds.<br><br>
+                The model will detect <strong style="color:#10b981;">organic pitch jitter + ambient noise floor</strong> 
+                and classify you as <strong style="color:#10b981;">CLEAN (Real Human Voice)</strong>.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
-            with col_radar:
-                st.markdown("#### 🕸️ Signal Radar vs Real/AI Reference")
-                sigs = results['signals']
+    st.markdown("")
 
-                # Normalize signals 0-1 for radar (higher = more AI-like)
-                def norm_pjr(v): return min(v / 0.20, 1.0)                  # 0→0, 0.20→1
-                def norm_jitter_ai(v): return 1.0 - min(max((v - 0.0012) / (0.055 - 0.0012), 0), 1)  # low jitter = high AI
-                def norm_noise_ai(v): return max(1.0 - v / 0.005, 0.0)      # near-zero noise = high AI
-                def norm_flat(v): return min(v / 0.10, 1.0)
-                def norm_mfcc_ai(v): return 1.0 - min(abs(v - 30) / 90, 1.0)  # rigid MFCC = high AI
+    # ---- Session State Init ----
+    if "rec_audio_bytes" not in st.session_state:
+        st.session_state.rec_audio_bytes = None
+    if "rec_scanned" not in st.session_state:
+        st.session_state.rec_scanned = False
+    if "rec_results" not in st.session_state:
+        st.session_state.rec_results = None
 
-                user_vals = [
-                    norm_pjr(sigs['phase_jump_rate']),
-                    norm_jitter_ai(sigs['jitter']),
-                    norm_noise_ai(sigs['noise_floor']),
-                    norm_flat(sigs['spectral_flatness']),
-                    norm_mfcc_ai(sigs['mfcc_delta_var']),
-                ]
-                real_ref = [0.10, 0.15, 0.20, 0.20, 0.15]
-                fake_ref = [0.85, 0.90, 0.90, 0.55, 0.75]
-                categories = ['Phase Jump', 'Jitter (AI)', 'Noise Floor (AI)', 'Spectral Flat', 'MFCC Rigid']
+    # ---- Recording Widget ----
+    st.markdown("### 🔴 Record Your Audio")
+    st.caption("Press the microphone button to start recording. Press again to stop. You need at least ~2 seconds of audio.")
 
-                fig_radar = go.Figure()
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=real_ref + [real_ref[0]],
-                    theta=categories + [categories[0]],
-                    fill='toself',
-                    name='Typical REAL',
-                    line=dict(color='#10b981', width=2),
-                    fillcolor='rgba(16, 185, 129, 0.08)'
-                ))
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=fake_ref + [fake_ref[0]],
-                    theta=categories + [categories[0]],
-                    fill='toself',
-                    name='Typical AI FAKE',
-                    line=dict(color='#f43f5e', width=2),
-                    fillcolor='rgba(244, 63, 94, 0.08)'
-                ))
-                fig_radar.add_trace(go.Scatterpolar(
-                    r=user_vals + [user_vals[0]],
-                    theta=categories + [categories[0]],
-                    fill='toself',
-                    name='Your Audio',
-                    line=dict(color='#a855f7', width=3),
-                    fillcolor='rgba(168, 85, 247, 0.15)'
-                ))
-                fig_radar.update_layout(
-                    polar=dict(
-                        bgcolor='rgba(0,0,0,0)',
-                        radialaxis=dict(visible=True, range=[0, 1], color='#475569', gridcolor='rgba(255,255,255,0.06)'),
-                        angularaxis=dict(color='#94a3b8', gridcolor='rgba(255,255,255,0.06)')
-                    ),
-                    showlegend=True,
-                    legend=dict(font=dict(color='white', size=11), bgcolor='rgba(0,0,0,0)'),
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    font={'color': 'white', 'family': 'Outfit'},
-                    height=280,
-                    margin=dict(l=50, r=50, t=20, b=20)
-                )
-                st.plotly_chart(fig_radar, use_container_width=True)
+    col_r1, col_r2, col_r3 = st.columns([1, 2, 1])
+    with col_r2:
+        st.markdown(
+            """
+            <div style="text-align:center; padding: 10px 0 6px 0;">
+                <p style="color:#94a3b8; font-size:0.9rem; margin:0;">
+                    🎙️ Click the button below — speak or play AI audio from your phone
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        live_audio_bytes = audio_recorder(
+            text="",
+            recording_color="#f43f5e",
+            neutral_color="#3b82f6",
+            icon_size="3x",
+            pause_threshold=3.0,
+            sample_rate=16000,
+        )
 
-            st.divider()
+    # When new audio captured, store it and reset old results
+    if live_audio_bytes is not None and len(live_audio_bytes) > 1000:
+        st.session_state.rec_audio_bytes = live_audio_bytes
+        st.session_state.rec_scanned = False
+        st.session_state.rec_results = None
 
-            # ---- 5 SIGNAL TELEMETRY ----
-            st.markdown("### 📡 5-Signal Telemetry Board")
-            st.caption("Each signal measured from your audio vs typical human / AI ranges.")
+    # ---- Playback + Scan ----
+    if st.session_state.rec_audio_bytes is not None:
+        st.markdown("---")
+        st.markdown("### 🎵 Captured Recording")
 
-            sigs = results['signals']
-            c_phase = "anomaly" if sigs['phase_jump_rate'] > 0.08 else "normal"
-            c_jitter = "anomaly" if (sigs['jitter'] < 0.0012 or sigs['jitter'] > 0.055) else "normal"
-            c_flat = "anomaly" if sigs['spectral_flatness'] > 0.05 else "normal"
-            c_noise = "anomaly" if sigs['noise_floor'] < 0.0005 else "normal"
-            c_delta = "anomaly" if sigs['mfcc_delta_var'] < 5.0 or sigs['mfcc_delta_var'] > 120.0 else "normal"
+        col_play, col_info, col_reset = st.columns([3, 2, 1])
+        with col_play:
+            st.audio(st.session_state.rec_audio_bytes, format="audio/wav")
+        with col_info:
+            audio_size_kb = len(st.session_state.rec_audio_bytes) / 1024
+            st.metric("Clip Size", f"{audio_size_kb:.1f} KB")
+            duration_est = audio_size_kb / 32  # rough estimate for 16kHz mono 16-bit
+            st.metric("Est. Duration", f"~{duration_est:.1f}s")
+        with col_reset:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            if st.button("🗑️ Clear", use_container_width=True, key="clear_live_rec"):
+                st.session_state.rec_audio_bytes = None
+                st.session_state.rec_scanned = False
+                st.session_state.rec_results = None
+                st.rerun()
 
-            col1, col2, col3, col4, col5 = st.columns(5)
-            col1.markdown(f"""<div class="sensor-card">
-                <div class="sensor-title">⚡ Phase Jump Rate</div>
-                <div class="sensor-value" style="color: {'#f43f5e' if c_phase=='anomaly' else '#10b981'}">{sigs['phase_jump_rate']:.4f}</div>
-                <div class="sensor-status-{c_phase}">{'Vocoder Seams' if c_phase=='anomaly' else 'Smooth Flow'}</div>
-                <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &lt; 0.11</div>
-            </div>""", unsafe_allow_html=True)
-
-            col2.markdown(f"""<div class="sensor-card">
-                <div class="sensor-title">🎙️ Pitch Jitter</div>
-                <div class="sensor-value" style="color: {'#f43f5e' if c_jitter=='anomaly' else '#10b981'}">{sigs['jitter']:.5f}</div>
-                <div class="sensor-status-{c_jitter}">{'AI Artifact' if c_jitter=='anomaly' else 'Organic Jitter'}</div>
-                <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: 0.0015–0.050</div>
-            </div>""", unsafe_allow_html=True)
-
-            col3.markdown(f"""<div class="sensor-card">
-                <div class="sensor-title">🎚️ Spectral Flatness</div>
-                <div class="sensor-value" style="color: {'#f43f5e' if c_flat=='anomaly' else '#10b981'}">{sigs['spectral_flatness']:.4f}</div>
-                <div class="sensor-status-{c_flat}">{'Synthetic' if c_flat=='anomaly' else 'Vocal Formants'}</div>
-                <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &lt; 0.05</div>
-            </div>""", unsafe_allow_html=True)
-
-            col4.markdown(f"""<div class="sensor-card">
-                <div class="sensor-title">🔌 Noise Floor (RMS)</div>
-                <div class="sensor-value" style="color: {'#f43f5e' if c_noise=='anomaly' else '#10b981'}">{sigs['noise_floor']:.6f}</div>
-                <div class="sensor-status-{c_noise}">{'Digital Silence' if c_noise=='anomaly' else 'Natural Room Noise'}</div>
-                <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: &gt; 0.002</div>
-            </div>""", unsafe_allow_html=True)
-
-            col5.markdown(f"""<div class="sensor-card">
-                <div class="sensor-title">📊 MFCC Delta Var</div>
-                <div class="sensor-value" style="color: {'#f43f5e' if c_delta=='anomaly' else '#10b981'}">{sigs['mfcc_delta_var']:.2f}</div>
-                <div class="sensor-status-{c_delta}">{'Rigid/Abrupt' if c_delta=='anomaly' else 'Dynamic Range'}</div>
-                <div style="font-size:0.72rem;color:#64748b;margin-top:4px">Real: 5 – 120</div>
-            </div>""", unsafe_allow_html=True)
-
-            st.divider()
-
-            # ---- WHY REAL / WHY FAKE EXPLANATION CARDS ----
-            st.markdown("### 🔬 Signal-by-Signal Explanation")
-            is_fake = results['layer1_blocked']
-
-            def explain_card(title, value_str, verdict, explanation, card_type):
-                color = "#f43f5e" if card_type == "fake" else ("#10b981" if card_type == "real" else "#3b82f6")
-                icon = "🔴" if card_type == "fake" else ("🟢" if card_type == "real" else "🔵")
-                return f"""<div class="explain-card explain-card-{card_type}">
-                    <strong style="color:{color}">{icon} {title}</strong><br>
-                    <span style="font-family:'JetBrains Mono',monospace;font-size:0.9rem">{value_str}</span><br>
-                    <span style="color:#94a3b8;font-size:0.88rem">{verdict} — {explanation}</span>
-                </div>"""
-
-            # Phase Jump Rate explanation
-            pjr = sigs['phase_jump_rate']
-            if pjr > 0.08:
-                pjr_html = explain_card("Phase Jump Rate", f"{pjr:.4f}",
-                    "⚠️ ELEVATED",
-                    "AI vocoders generate speech frame-by-frame (every 20ms). Each frame boundary causes a sudden phase discontinuity — a \"seam\" invisible to ears but measurable mathematically. Real vocal cords produce continuous phase flow.",
-                    "fake")
-            else:
-                pjr_html = explain_card("Phase Jump Rate", f"{pjr:.4f}",
-                    "✅ NORMAL",
-                    "Phase transitions are smooth and continuous — consistent with a real human vocal tract producing uninterrupted airflow through vibrating cords.",
-                    "real")
-
-            # Jitter explanation
-            jitter = sigs['jitter']
-            if jitter < 0.0012:
-                jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
-                    "⚠️ TOO FLAT (Robotic)",
-                    "Jitter is near-zero, meaning pitch is unnaturally constant. Human vocal cords have micro-tremors that cause slight frequency wobble. AI TTS systems tend to produce perfectly flat pitch — a telltale digital artifact.",
-                    "fake")
-            elif jitter > 0.055:
-                jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
-                    "⚠️ TOO ERRATIC (Synthetic noise)",
-                    "Jitter exceeds normal human range. This level of pitch variation is characteristic of poorly calibrated TTS vocoders or voice conversion artifacts that introduce random noise into pitch modulation.",
-                    "fake")
-            else:
-                jit_html = explain_card("Pitch Jitter", f"{jitter:.6f}",
-                    "✅ ORGANIC",
-                    "Pitch varies naturally within the human biological range. This is consistent with muscle micro-tremors in real vocal cords — a difficult-to-fake biometric.",
-                    "real")
-
-            # Noise floor explanation
-            nf = sigs['noise_floor']
-            if nf < 0.0005:
-                nf_html = explain_card("Noise Floor (RMS)", f"{nf:.6f}",
-                    "⚠️ DIGITAL SILENCE",
-                    "Near-zero energy in the quietest frames. Real recordings always contain room noise, breath sounds, or mic hiss. This near-perfect silence is a strong indicator of a digitally synthesized voice played from a device.",
-                    "fake")
-            else:
-                nf_html = explain_card("Noise Floor (RMS)", f"{nf:.6f}",
-                    "✅ NATURAL",
-                    "Background energy is present, consistent with real-world recording conditions (room acoustics, microphone hiss, or environmental noise). AI-generated voices typically have near-zero background energy.",
-                    "real")
-
-            # Spectral flatness explanation
-            sf_val = sigs['spectral_flatness']
-            if sf_val > 0.05:
-                sf_html = explain_card("Spectral Flatness", f"{sf_val:.4f}",
-                    "⚠️ FLAT SPECTRUM",
-                    "Frequency energy is unusually spread (noise-like). Real speech has strong formant peaks (F1, F2, F3) giving it a non-flat spectrum. Excessive flatness suggests synthetic smoothing by a TTS model.",
-                    "fake")
-            else:
-                sf_html = explain_card("Spectral Flatness", f"{sf_val:.4f}",
-                    "✅ HARMONIC",
-                    "Strong harmonic content with clear formant structure — consistent with real speech resonating in a human vocal tract.",
-                    "real")
-
-            # MFCC explanation
-            mdv = sigs['mfcc_delta_var']
-            if mdv < 5.0:
-                mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
-                    "⚠️ RIGID",
-                    "Spectral texture transitions too slowly. This indicates a voice that doesn't change its mouth/throat shape naturally — a sign of rigid AI generation.",
-                    "fake")
-            elif mdv > 120.0:
-                mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
-                    "⚠️ ABRUPT JUMPS",
-                    "Spectral texture changes violently between frames — consistent with vocoder frame boundary artifacts creating sudden discontinuities.",
-                    "fake")
-            else:
-                mfcc_html = explain_card("MFCC Delta Variance", f"{mdv:.2f}",
-                    "✅ DYNAMIC",
-                    "Spectral texture transitions vary naturally — consistent with continuous articulation of a real human speaker.",
-                    "real")
-
-            col_exp1, col_exp2 = st.columns(2)
-            with col_exp1:
-                st.markdown(pjr_html, unsafe_allow_html=True)
-                st.markdown(jit_html, unsafe_allow_html=True)
-                st.markdown(nf_html, unsafe_allow_html=True)
-            with col_exp2:
-                st.markdown(sf_html, unsafe_allow_html=True)
-                st.markdown(mfcc_html, unsafe_allow_html=True)
-
-            st.divider()
-
-            # ---- VISUAL CHARTS ----
-            st.markdown("### 📈 Acoustic Visualizations")
-            col_w, col_s = st.columns(2)
-
-            with col_w:
-                st.markdown("**Waveform + RMS Energy (10th Pct = Noise Floor)**")
-                y_disp = results['audio']
-                t = np.arange(len(y_disp)) / 16000
-                rms_frames = librosa.feature.rms(y=y_disp, frame_length=512, hop_length=160)[0]
-                t_rms = librosa.frames_to_time(np.arange(len(rms_frames)), sr=16000, hop_length=160)
-
-                fig_wave = go.Figure()
-                fig_wave.add_trace(go.Scatter(
-                    x=t, y=y_disp, name="Waveform",
-                    line=dict(color='rgba(59, 130, 246, 0.5)', width=0.8)
-                ))
-                fig_wave.add_trace(go.Scatter(
-                    x=t_rms, y=rms_frames, name="RMS Energy",
-                    line=dict(color='#a855f7', width=2)
-                ))
-                nf_val = float(np.percentile(rms_frames, 10))
-                fig_wave.add_hline(
-                    y=nf_val, line_dash="dot", line_color="#f43f5e",
-                    annotation_text=f"Noise Floor: {nf_val:.6f}",
-                    annotation_font_color="#f43f5e"
-                )
-                fig_wave.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                    font={'color': 'white', 'family': 'Outfit'},
-                    height=260, margin=dict(l=0, r=0, t=10, b=0),
-                    legend=dict(bgcolor='rgba(0,0,0,0)', font=dict(size=11))
-                )
-                fig_wave.update_xaxes(title="Time (s)", color="#475569", showgrid=False)
-                fig_wave.update_yaxes(title="Amplitude", color="#475569", gridcolor="rgba(255,255,255,0.05)")
-                st.plotly_chart(fig_wave, use_container_width=True)
-
-            with col_s:
-                st.markdown("**Mel-Spectrogram (128×128 CNN Input)**")
-                fig_spec = px.imshow(
-                    results['mel_spectrogram'],
-                    labels=dict(x="Time Frames", y="Mel Frequency Bins"),
-                    color_continuous_scale='Viridis',
-                    aspect='auto'
-                )
-                fig_spec.update_layout(
-                    paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                    font={'color': 'white', 'family': 'Outfit'},
-                    height=260, margin=dict(l=0, r=0, t=10, b=0),
-                    coloraxis_showscale=False
-                )
-                st.plotly_chart(fig_spec, use_container_width=True)
-
-            # ---- PHASE JUMP HEATMAP ----
-            st.markdown("**Phase Acceleration Heatmap (2nd-order Phase Difference — AI Seams Visible as Bright Bands)**")
-            y_phase = results['y_full']
-            stft = librosa.stft(y_phase, n_fft=512, hop_length=160)
-            phase = np.angle(stft)
-            pd1 = np.diff(phase, axis=1)
-            pd1w = np.arctan2(np.sin(pd1), np.cos(pd1))
-            pd2 = np.diff(pd1w, axis=1)
-            pd2w = np.arctan2(np.sin(pd2), np.cos(pd2))
-            heatmap_data = np.abs(pd2w[:96, :])   # voiced range only
-
-            fig_phase = px.imshow(
-                heatmap_data,
-                labels=dict(x="Time Frames", y="Frequency Bins (0–3kHz)"),
-                color_continuous_scale=[
-                    [0, "#0d0d15"], [0.4, "#2563eb"], [0.7, "#7c3aed"], [1.0, "#f43f5e"]
-                ],
-                aspect='auto',
-                zmin=0, zmax=np.pi
-            )
-            fig_phase.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font={'color': 'white', 'family': 'Outfit'},
-                height=200, margin=dict(l=0, r=0, t=10, b=0),
-                coloraxis_colorbar=dict(title="Phase Accel (rad)", tickfont=dict(color='white'))
-            )
-            st.plotly_chart(fig_phase, use_container_width=True)
-            st.caption("🔴 Bright vertical bands = sudden phase jumps at vocoder frame boundaries. Real human voices show uniform low-level noise. AI voices show structured red bands.")
-
-            # ---- SIGNAL BAR CHART ----
-            st.markdown("**Signal Comparison: Your Audio vs Typical Real / AI Ranges**")
-            bar_signals = ['Phase Jump Rate', 'Pitch Jitter ×100', 'Noise Floor ×1000', 'Spectral Flatness', 'MFCC δVar ÷10']
-            bar_user = [
-                sigs['phase_jump_rate'],
-                sigs['jitter'] * 100,
-                sigs['noise_floor'] * 1000,
-                sigs['spectral_flatness'],
-                sigs['mfcc_delta_var'] / 10
-            ]
-            bar_real_max = [0.11, 5.0, 5.0, 0.05, 12.0]
-            bar_fake_min = [0.08, 0.0, 0.0, 0.05, 0.0]
-
-            fig_bar = go.Figure()
-            fig_bar.add_trace(go.Bar(
-                name="Your Audio",
-                x=bar_signals, y=bar_user,
-                marker_color=['#f43f5e' if results['layer1_blocked'] else '#10b981'] * 5,
-                opacity=0.85
+        # ---- Waveform Preview ----
+        try:
+            import io
+            raw_bytes_io = io.BytesIO(st.session_state.rec_audio_bytes)
+            y_preview, sr_preview = librosa.load(raw_bytes_io, sr=16000, mono=True, duration=5.0)
+            times_preview = np.linspace(0, len(y_preview) / 16000, len(y_preview))
+            fig_wave = go.Figure()
+            fig_wave.add_trace(go.Scatter(
+                x=times_preview,
+                y=y_preview,
+                mode="lines",
+                line=dict(color="#3b82f6", width=1),
+                name="Waveform",
             ))
-            fig_bar.add_trace(go.Bar(
-                name="Typical Real Upper Limit",
-                x=bar_signals, y=bar_real_max,
-                marker_color='rgba(16,185,129,0.2)',
-                marker_line=dict(color='#10b981', width=2)
-            ))
-            fig_bar.update_layout(
-                barmode='group',
-                paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-                font={'color': 'white', 'family': 'Outfit'},
-                height=280, margin=dict(l=0, r=0, t=10, b=0),
-                legend=dict(bgcolor='rgba(0,0,0,0)', font=dict(size=11)),
-                xaxis=dict(color='#475569', showgrid=False),
-                yaxis=dict(color='#475569', gridcolor='rgba(255,255,255,0.05)')
+            fig_wave.update_layout(
+                title="📈 Waveform Preview (first 5s at 16kHz)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#94a3b8"),
+                xaxis=dict(title="Time (s)", gridcolor="rgba(255,255,255,0.05)"),
+                yaxis=dict(title="Amplitude", gridcolor="rgba(255,255,255,0.05)"),
+                height=200,
+                margin=dict(l=40, r=20, t=40, b=40),
             )
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_wave, use_container_width=True)
+        except Exception as e:
+            st.caption(f"(Waveform preview unavailable: {e})")
+
+        # ---- Scan Button ----
+        if st.button("🔍 Run PhaseGuard Scan on Recording", type="primary", use_container_width=True, key="run_live_scan"):
+            prog = st.progress(0)
+            stat = st.empty()
+            tmp_path = None
+            try:
+                stat.info("⏳ Step 1/4 — Decoding recorded audio bytes...")
+                prog.progress(15)
+
+                # Write raw bytes to temp file, then reload at 16kHz to fix any
+                # sample-rate mismatch from the browser mic (48kHz → 16kHz)
+                import io
+                raw_bytes_io = io.BytesIO(st.session_state.rec_audio_bytes)
+                y_rec, sr_rec = librosa.load(raw_bytes_io, sr=16000, mono=True)
+
+                # Save back as clean 16kHz WAV for analyze_voice_clip
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+                    sf.write(f.name, y_rec, 16000, subtype="PCM_16")
+                    tmp_path = f.name
+
+                stat.info("⏳ Step 2/4 — Resampled to 16 kHz · standardizing...")
+                prog.progress(35)
+                time.sleep(0.1)
+
+                stat.info("⏳ Step 3/4 — Extracting 5 acoustic physical signals...")
+                prog.progress(65)
+                time.sleep(0.1)
+
+                stat.info("⏳ Step 4/4 — Running MobileNetV3 CNN inference...")
+                prog.progress(90)
+
+                live_results = analyze_voice_clip(tmp_path, l1_model, l1_threshold, enable_overrides)
+                prog.progress(100)
+                stat.success("✅ Scan complete!")
+                time.sleep(0.4)
+                stat.empty()
+                prog.empty()
+
+                st.session_state.rec_results = live_results
+                st.session_state.rec_scanned = True
+
+            except Exception as e:
+                stat.error(f"❌ Scan failed: {e}")
+                prog.empty()
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
+        # ---- Results ----
+        if st.session_state.rec_scanned and st.session_state.rec_results is not None:
+            render_analysis_dashboard(st.session_state.rec_results, l1_threshold)
+
+            # Extra: show what scenario was likely detected
+            res = st.session_state.rec_results
+            st.markdown("---")
+            st.markdown("### 🔎 What Did PhaseGuard Detect?")
+            if res["layer1_blocked"]:
+                st.markdown("""
+                <div style="background:rgba(244,63,94,0.1); border:1px solid rgba(244,63,94,0.4);
+                            border-radius:12px; padding:16px;">
+                    <h4 style="color:#f43f5e; margin:0 0 8px 0;">📱 Likely: LA Attack (AI Voice Replay)</h4>
+                    <p style="color:#94a3b8; margin:0;">
+                        The model detected signatures consistent with a <strong>synthetic / AI-generated voice</strong>
+                        played through a speaker — such as an ElevenLabs or HuggingFace TTS clip played from a phone.<br><br>
+                        Key indicators: near-zero noise floor (digital silence), irregular phase jump rate, 
+                        and/or abnormal pitch jitter pattern that falls outside the organic human range.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.4);
+                            border-radius:12px; padding:16px;">
+                    <h4 style="color:#10b981; margin:0 0 8px 0;">🎤 Likely: Real Human Voice (Live Recording)</h4>
+                    <p style="color:#94a3b8; margin:0;">
+                        The model detected characteristics consistent with a <strong>real, live human voice</strong>.<br><br>
+                        Key indicators: organic pitch micro-tremors (jitter in 0.0015–0.075 range), 
+                        non-zero ambient noise floor from the room environment, and smooth phase continuity 
+                        typical of biological vocal cord vibration.
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
 
 # ------------------------------------------
 # TAB 2: PRE-LOADED SAMPLES
