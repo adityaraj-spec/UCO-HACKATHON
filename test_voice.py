@@ -108,13 +108,12 @@ def main():
     
     if not args.no_overrides:
         if is_physically_real and prediction > 0.5:
-            # Only override to REAL if CNN is NOT extremely confident about fake (< 85% certain)
-            # This prevents overriding near-certain CNN predictions for high-quality GAN fakes
-            # (WaveFake vocoders can copy LJSpeech acoustic properties including noise floor and jitter)
-            if prediction < 0.85:
+            # Only override to REAL if CNN is NOT near-certain about fake (< 96%)
+            # Gap: LJSpeech real CNN ~0.72-0.93, WaveFake fake CNN ~0.9989
+            # 0.96 sits cleanly between both groups
+            if prediction < 0.96:
                 prediction = min(prediction, 0.12)
                 override_applied = "REAL (Low phase jumps / organic jitter)"
-            # else: CNN is > 85% sure it's fake — trust the CNN, don't override
         elif is_physically_fake and prediction < 0.5:
             # Override to FAKE
             prediction = max(prediction, 0.88)

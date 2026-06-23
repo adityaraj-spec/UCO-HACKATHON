@@ -209,13 +209,11 @@ def analyze_voice_clip(audio_path, l1_model, l1_thresh, enable_overrides=True):
 
     if enable_overrides:
         if is_physically_real and raw_cnn > l1_thresh:
-            # Only override to REAL if CNN is NOT extremely confident about fake (< 85%)
-            # High-quality GAN fakes (WaveFake) can copy acoustic properties of the original voice,
-            # so if CNN is > 85% sure it's fake, we trust the CNN over the physics rules.
-            if raw_cnn < 0.85:
+            # Only override to REAL if CNN is NOT near-certain about fake (< 96%)
+            # Gap: LJSpeech real CNN ~0.72-0.93 | WaveFake fake CNN ~0.9989
+            if raw_cnn < 0.96:
                 ai_probability = min(raw_cnn, 0.12)
                 override_reason = "Physics → REAL (organic jitter + low phase jumps)"
-            # else: CNN > 85% confident fake — trust CNN, no override
         elif is_physically_fake and raw_cnn < l1_thresh:
             ai_probability = max(raw_cnn, 0.88)
             override_reason = "Physics → FAKE (AI vocoder artifacts + digital silence)"
