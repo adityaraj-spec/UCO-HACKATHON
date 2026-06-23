@@ -17,7 +17,7 @@ from train_layer1 import PhaseGuardL1
 def main():
     parser = argparse.ArgumentParser(description="Test a voice file with PhaseGuard Layer 1 (AI Voice Authenticity)")
     parser.add_argument("file_path", type=str, help="Path to the WAV audio file to test")
-    parser.add_argument("--enable-overrides", action="store_true", help="Enable physics-based consistency override logic (default: disabled)")
+    parser.add_argument("--no-overrides", action="store_true", help="Disable physics-based consistency override logic")
     args = parser.parse_args()
     
     file_path = args.file_path
@@ -81,26 +81,23 @@ def main():
     if feats:
         # 1. Override overfitted CNN false positives (Real voice classified as Fake)
         # Case A: Very clean / studio real voice (low phase jumps and organic jitter)
-        if feats['phase_jump_rate'] < 0.11 and 0.0015 <= feats['jitter'] <= 0.05:
+        if feats['phase_jump_rate'] < 0.11 and 0.0015 <= feats['jitter'] <= 0.075:
             is_physically_real = True
         # Case B: Compressed/echo-cancelled real voice (e.g., WhatsApp audio)
-        # It may have elevated PJR, but retains organic jitter and natural room noise floor
-        elif feats['noise_floor'] > 0.0006 and 0.0015 <= feats['jitter'] <= 0.05:
+        # We raise the noise floor threshold from 0.0006 to 0.002 to avoid misclassifying quiet fake voices
+        elif feats['noise_floor'] > 0.002 and 0.0015 <= feats['jitter'] <= 0.075:
             if feats['phase_jump_rate'] < 0.23:
                 is_physically_real = True
         # Case C: Noise-gated/edited real voice (e.g., edited in Audacity)
-        # Has digital silence, but retains organic human jitter and moderately low PJR
-        elif feats['noise_floor'] <= 0.0006 and 0.0015 <= feats['jitter'] <= 0.05:
+        elif feats['noise_floor'] <= 0.0006 and 0.0015 <= feats['jitter'] <= 0.075:
             if feats['phase_jump_rate'] < 0.14:
                 is_physically_real = True
                 
         # 2. Override false negatives (Fake voice classified as Real, e.g., demo.wav)
-        # A synthetic override should only trigger if the voice exhibits both AI vocoder signatures
-        # (near-zero noise floor or erratic/robotic pitch) AND phase discontinuities,
-        # AND it does NOT have organic human jitter.
         has_ai_jitter = (feats['jitter'] < 0.0012) or (feats['jitter'] > 0.055)
         
-        if feats['phase_jump_rate'] > 0.12:
+        # We lower the phase jump rate threshold from 0.12 to 0.08 to correctly capture higher-quality AI clones
+        if feats['phase_jump_rate'] > 0.08:
             # Case A: Digital silence (near-zero noise floor) AND AI/unnatural jitter
             if feats['noise_floor'] < 0.0005 and has_ai_jitter:
                 is_physically_fake = True
@@ -111,7 +108,7 @@ def main():
     raw_prediction = prediction
     override_applied = None
     
-    if args.enable_overrides:
+    if not args.no_overrides:
         if is_physically_real and prediction > 0.5:
             # Override to REAL
             prediction = min(prediction, 0.12)
