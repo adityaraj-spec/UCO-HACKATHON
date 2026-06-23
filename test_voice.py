@@ -96,23 +96,25 @@ def main():
         # 2. Override false negatives (Fake voice classified as Real, e.g., demo.wav)
         has_ai_jitter = (feats['jitter'] < 0.0012) or (feats['jitter'] > 0.055)
         
-        # We lower the phase jump rate threshold from 0.12 to 0.08 to correctly capture higher-quality AI clones
-        if feats['phase_jump_rate'] > 0.08:
-            # Case A: Digital silence (near-zero noise floor) AND AI/unnatural jitter
-            if feats['noise_floor'] < 0.0005 and has_ai_jitter:
-                is_physically_fake = True
-            # Case B: AI/unnatural jitter (independent of noise floor)
-            elif has_ai_jitter:
-                is_physically_fake = True
+        # Only override to FAKE when the definitive AI signature is present:
+        # near-zero digital silence (< 0.0005) — real recordings ALWAYS have some background energy.
+        # Removed Case B (noise_floor < 0.002) — too close to boundary for mobile/phone recordings
+        # which can legitimately have low-ish noise floors while still being real.
+        if feats['phase_jump_rate'] > 0.08 and feats['noise_floor'] < 0.0005 and has_ai_jitter:
+            is_physically_fake = True
 
     raw_prediction = prediction
     override_applied = None
     
     if not args.no_overrides:
         if is_physically_real and prediction > 0.5:
-            # Override to REAL
-            prediction = min(prediction, 0.12)
-            override_applied = "REAL (Low phase jumps / organic jitter)"
+            # Only override to REAL if CNN is NOT extremely confident about fake (< 85% certain)
+            # This prevents overriding near-certain CNN predictions for high-quality GAN fakes
+            # (WaveFake vocoders can copy LJSpeech acoustic properties including noise floor and jitter)
+            if prediction < 0.85:
+                prediction = min(prediction, 0.12)
+                override_applied = "REAL (Low phase jumps / organic jitter)"
+            # else: CNN is > 85% sure it's fake — trust the CNN, don't override
         elif is_physically_fake and prediction < 0.5:
             # Override to FAKE
             prediction = max(prediction, 0.88)
