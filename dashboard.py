@@ -156,7 +156,7 @@ models_ready = os.path.exists("models/layer1_mobilenet.pth")
 # ==========================================
 # AUDIO PREDICTION PIPELINE
 # ==========================================
-def analyze_voice_clip(audio_path, l1_model, l1_thresh):
+def analyze_voice_clip(audio_path, l1_model, l1_thresh, enable_overrides=False):
     """
     Executes PhaseGuard's Layer 1 engine:
     - Mel-spectrogram through MobileNetV3 CNN
@@ -223,12 +223,13 @@ def analyze_voice_clip(audio_path, l1_model, l1_thresh):
             elif has_ai_jitter:
                 is_physically_fake = True
 
-    if is_physically_real and ai_probability > l1_thresh:
-        # Override to REAL
-        ai_probability = min(ai_probability, 0.12)
-    elif is_physically_fake and ai_probability < l1_thresh:
-        # Override to FAKE
-        ai_probability = max(ai_probability, 0.88)
+    if enable_overrides:
+        if is_physically_real and ai_probability > l1_thresh:
+            # Override to REAL
+            ai_probability = min(ai_probability, 0.12)
+        elif is_physically_fake and ai_probability < l1_thresh:
+            # Override to FAKE
+            ai_probability = max(ai_probability, 0.88)
         
     # Block Decision
     layer1_blocked = ai_probability > l1_thresh
@@ -294,6 +295,11 @@ else:
             min_value=0.50, max_value=0.95, value=0.70, step=0.05,
             help="If AI voice probability exceeds this, Layer 1 immediately flags a FRAUD ALERT."
         )
+        enable_overrides = st.checkbox(
+            "Enable Physics Overrides",
+            value=False,
+            help="Apply hardcoded heuristic checks on Phase Jump, Jitter, and Noise Floor to override the CNN model predictions."
+        )
         
         st.markdown("---")
         st.markdown("### 💡 Acoustic Diagnostics")
@@ -339,7 +345,7 @@ else:
                 progress_placeholder.info("Step 3/3: Running Layer 1 CNN (MobileNetV3) for deepfake detection...")
                 progress_bar.progress(95)
                 
-                results = analyze_voice_clip(tmp_path, l1_model, l1_threshold)
+                results = analyze_voice_clip(tmp_path, l1_model, l1_threshold, enable_overrides)
                 
                 progress_bar.progress(100)
                 progress_placeholder.success("Forensic Scan Complete!")
@@ -560,7 +566,7 @@ else:
                     st.audio(tmp_rec_path, format="audio/wav")
                     
                     with st.spinner("Processing live channel data..."):
-                        results = analyze_voice_clip(tmp_rec_path, l1_model, l1_threshold)
+                        results = analyze_voice_clip(tmp_rec_path, l1_model, l1_threshold, enable_overrides)
                         
                     os.unlink(tmp_rec_path)
                     st.session_state['live_results'] = results
@@ -602,7 +608,7 @@ else:
                     st.audio(path, format="audio/wav")
                     
                     with st.spinner("Analyzing call stream packets..."):
-                        results = analyze_voice_clip(path, l1_model, l1_threshold)
+                        results = analyze_voice_clip(path, l1_model, l1_threshold, enable_overrides)
                     st.session_state['live_results'] = results
                 else:
                     st.error("Scenario audio files not found. Generate simulated data first.")
