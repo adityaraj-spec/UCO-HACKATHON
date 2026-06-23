@@ -26,28 +26,12 @@ from scipy.ndimage import zoom
 def build_manifest():
     rows = []  # each row = [filepath, label(0/1), speaker_id, source_name]
     
-    # ---- Team real voices: each member is their own speaker ----
-    for member in ["vishal", "abhinav", "aditya", "dhruv"]:
-        folder = f"data/real_voices/{member}"
-        if os.path.exists(folder):
-            for f in os.listdir(folder):
-                if f.lower().endswith('.wav'):
-                    rows.append([os.path.join(folder, f), 0, member, "team_real"])
-    
-    # ---- Team clones: each member's clone = same speaker_id as their real voice ----
-    for member in ["vishal", "abhinav", "aditya", "dhruv"]:
-        folder = f"data/clones/{member}"
-        if os.path.exists(folder):
-            for f in os.listdir(folder):
-                if f.lower().endswith('.wav'):
-                    rows.append([os.path.join(folder, f), 1, member, "team_clone"])
-    
     # ---- Walk data/sources/real (Label = 0) ----
     real_sources_dir = "data/sources/real"
     if os.path.exists(real_sources_dir):
         for root, dirs, files in os.walk(real_sources_dir):
             for f in files:
-                if f.lower().endswith('.wav'):
+                if f.lower().endswith(('.wav', '.flac')):
                     filepath = os.path.join(root, f)
                     if f.startswith("cv_"):
                         parts = f.split('_')
@@ -57,6 +41,14 @@ def build_manifest():
                         parts = f.split('_')
                         speaker_id = parts[1] if len(parts) > 1 else f.split('.')[0]
                         source = "svarah"
+                    elif f.startswith(("la_", "pa_")):
+                        parts = f.split('_')
+                        speaker_id = f"{parts[3]}_{parts[4]}"
+                        source = parts[0]
+                    elif f.startswith(("vishal_", "abhinav_", "aditya_", "dhruv_")):
+                        parts = f.split('_')
+                        speaker_id = f"sim_{parts[0]}"
+                        source = "simulated"
                     else:
                         speaker_id = "ljspeech_linda"
                         source = "ljspeech"
@@ -67,13 +59,21 @@ def build_manifest():
     if os.path.exists(fake_sources_dir):
         for root, dirs, files in os.walk(fake_sources_dir):
             for f in files:
-                if f.lower().endswith('.wav'):
+                if f.lower().endswith(('.wav', '.flac')):
                     filepath = os.path.join(root, f)
                     if f.startswith("wf_"):
                         parts = f.split('_')
                         vocoder = parts[1] if len(parts) > 1 else "vocoder"
                         speaker_id = f"wavefake_{vocoder}"
                         source = f"wavefake_{vocoder}"
+                    elif f.startswith(("la_", "pa_")):
+                        parts = f.split('_')
+                        speaker_id = f"{parts[3]}_{parts[4]}"
+                        source = parts[0]
+                    elif f.startswith(("vishal_", "abhinav_", "aditya_", "dhruv_")):
+                        parts = f.split('_')
+                        speaker_id = f"sim_{parts[0]}"
+                        source = "simulated"
                     else:
                         speaker_id = "wavefake_linda"
                         source = "wavefake"
@@ -149,14 +149,46 @@ def audio_to_mel_spectrogram(y, sr=16000):
 
 def extract_5_signals(y, sr=16000):
     stft = librosa.stft(y, n_fft=512, hop_length=160)
-    phase_diff = np.diff(np.angle(stft), axis=1)
-    phase_jump_rate = np.sum(np.abs(phase_diff) > np.pi*0.5) / phase_diff.size
+    phase = np.angle(stft)
+    phase_diff = np.diff(phase, axis=1)
+    phase_diff_wrapped = np.arctan2(np.sin(phase_diff), np.cos(phase_diff))
+    phase_diff2 = np.diff(phase_diff_wrapped, axis=1)
+    phase_diff2_wrapped = np.arctan2(np.sin(phase_diff2), np.cos(phase_diff2))
     
-    try:
-        f0, _, _ = librosa.pyin(y, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'), sr=sr)
-        f0_clean = f0[~np.isnan(f0)]
-        jitter = float(np.mean(np.abs(np.diff(f0_clean))) / (np.mean(f0_clean)+1e-10)) if len(f0_clean) > 2 else 0.0
-    except Exception:
+    magnitude = np.abs(stft)
+    mag_db = librosa.amplitude_to_db(magnitude, ref=np.max)
+    
+    voiced_mask = mag_db[:96, 2:] > -30
+    phase_diff2_wrapped_low = phase_diff2_wrapped[:96, :]
+    
+    if np.sum(voiced_mask) > 0:
+        phase_jump_rate = np.sum((np.abs(phase_diff2_wrapped_low) > np.pi * 0.5) & voiced_mask) / np.sum(voiced_mask)
+    else:
+        phase_jump_rate = np.sum(np.abs(phase_diff2_wrapped_low) > np.pi * 0.5) / phase_diff2_wrapped_low.size
+        
+    # Fast pitch jitter using numpy autocorrelation
+    frame_len = 1024
+    hop_len = 512
+    num_frames = (len(y) - frame_len) // hop_len + 1
+    f0s = []
+    min_lag = int(sr / 400) # 400 Hz
+    max_lag = int(sr / 65)  # 65 Hz
+    for i in range(num_frames):
+        frame = y[i*hop_len : i*hop_len + frame_len]
+        if np.std(frame) < 1e-4:
+            continue
+        corr = np.correlate(frame, frame, mode='full')
+        corr = corr[len(corr)//2:]
+        corr_range = corr[min_lag:max_lag]
+        if len(corr_range) == 0:
+            continue
+        lag = np.argmax(corr_range) + min_lag
+        f0 = sr / lag
+        f0s.append(f0)
+    f0s = np.array(f0s)
+    if len(f0s) > 2:
+        jitter = float(np.mean(np.abs(np.diff(f0s))) / (np.mean(f0s) + 1e-10))
+    else:
         jitter = 0.0
         
     flatness = float(np.mean(librosa.feature.spectral_flatness(y=y)))
@@ -167,6 +199,7 @@ def extract_5_signals(y, sr=16000):
     mfcc_delta_var = float(np.var(librosa.feature.delta(mfcc)))
     
     return [float(phase_jump_rate), jitter, flatness, noise_floor, mfcc_delta_var]
+
 
 
 # ============================================================

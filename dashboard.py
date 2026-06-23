@@ -177,11 +177,20 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
     Layer 1: Phase check & physical sensors (CNN model & metric limits)
     Layer 2: Speaker validation (ECAPA-TDNN cosine score)
     """
-    # Load and standardize waveform
+    # Load full audio for physical features to avoid padding/truncation artifacts
+    try:
+        y_full, _ = librosa.load(audio_path, sr=16000)
+    except Exception:
+        y_full = None
+        
+    # Load and standardize waveform for the CNN model spectrogram
     audio = load_and_standardize(audio_path)
     
     # Extract the 5 physical signals
-    signals = extract_5_signals(audio)
+    if y_full is not None:
+        signals = extract_5_signals(y_full)
+    else:
+        signals = extract_5_signals(audio)
     
     # Convert waveform to Mel-spectrogram
     mel = audio_to_mel_spectrogram(audio)
@@ -190,6 +199,7 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
     else:
         mel_resized = mel
     
+    # Normalize mel
     mel_min = mel_resized.min()
     mel_max = mel_resized.max()
     mel_norm = (mel_resized - mel_min) / (mel_max - mel_min + 1e-10)
@@ -198,6 +208,47 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
     mel_tensor = torch.FloatTensor(mel_norm).unsqueeze(0).unsqueeze(0)  # (1, 1, 128, 128)
     with torch.no_grad():
         ai_probability = float(l1_model(mel_tensor)[0][0])
+        
+    # Apply bidirectional physical signal consistency check to prevent out-of-distribution errors
+    is_physically_real = False
+    is_physically_fake = False
+    
+    if signals:
+        # 1. Override overfitted CNN false positives (Real voice classified as Fake)
+        # Case A: Very clean / studio real voice (low phase jumps and organic jitter)
+        if signals['phase_jump_rate'] < 0.11 and 0.0015 <= signals['jitter'] <= 0.05:
+            is_physically_real = True
+        # Case B: Compressed/echo-cancelled real voice (e.g., WhatsApp audio)
+        # It may have elevated PJR, but retains organic jitter and natural room noise floor
+        elif signals['noise_floor'] > 0.0006 and 0.0015 <= signals['jitter'] <= 0.05:
+            if signals['phase_jump_rate'] < 0.23:
+                is_physically_real = True
+        # Case C: Noise-gated/edited real voice (e.g., edited in Audacity)
+        # Has digital silence, but retains organic human jitter and moderately low PJR
+        elif signals['noise_floor'] <= 0.0006 and 0.0015 <= signals['jitter'] <= 0.05:
+            if signals['phase_jump_rate'] < 0.14:
+                is_physically_real = True
+                
+        # 2. Override false negatives (Fake voice classified as Real, e.g., demo.wav)
+        # A synthetic override should only trigger if the voice exhibits both AI vocoder signatures
+        # (near-zero noise floor or erratic/robotic pitch) AND phase discontinuities,
+        # AND it does NOT have organic human jitter.
+        has_ai_jitter = (signals['jitter'] < 0.0012) or (signals['jitter'] > 0.055)
+        
+        if signals['phase_jump_rate'] > 0.12:
+            # Case A: Digital silence (near-zero noise floor) AND AI/unnatural jitter
+            if signals['noise_floor'] < 0.0005 and has_ai_jitter:
+                is_physically_fake = True
+            # Case B: AI/unnatural jitter (independent of noise floor)
+            elif has_ai_jitter:
+                is_physically_fake = True
+
+    if is_physically_real and ai_probability > l1_thresh:
+        # Override to REAL
+        ai_probability = min(ai_probability, 0.12)
+    elif is_physically_fake and ai_probability < l1_thresh:
+        # Override to FAKE
+        ai_probability = max(ai_probability, 0.88)
         
     # Layer 1 Block Decision
     layer1_blocked = ai_probability > l1_thresh

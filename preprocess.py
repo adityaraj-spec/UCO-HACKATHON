@@ -59,14 +59,27 @@ def extract_5_signals(y, sr=16000):
     5. MFCC Delta Variance
     """
     # ---- SIGNAL 1: Phase Jump Rate ----
-    # Compute Short-Time Fourier Transform (STFT)
     stft = librosa.stft(y, n_fft=512, hop_length=160)
-    # Get phase angle (radians from -pi to pi)
     phase = np.angle(stft)
-    # Compute difference across time frames
+    # Compute 1st order wrapped difference
     phase_diff = np.diff(phase, axis=1)
-    # Count sudden jumps (greater than half a cycle, i.e., pi/2 or 0.5 * pi)
-    phase_jump_rate = np.sum(np.abs(phase_diff) > np.pi * 0.5) / phase_diff.size
+    phase_diff_wrapped = np.arctan2(np.sin(phase_diff), np.cos(phase_diff))
+    # Compute 2nd order wrapped difference (phase acceleration)
+    phase_diff2 = np.diff(phase_diff_wrapped, axis=1)
+    phase_diff2_wrapped = np.arctan2(np.sin(phase_diff2), np.cos(phase_diff2))
+    
+    # Filter by log-magnitude and limit frequency range to < 3000 Hz (voiced harmonics range)
+    # 3000 Hz / (16000 / 512) = 96 bins
+    magnitude = np.abs(stft)
+    mag_db = librosa.amplitude_to_db(magnitude, ref=np.max)
+    
+    voiced_mask = mag_db[:96, 2:] > -30
+    phase_diff2_wrapped_low = phase_diff2_wrapped[:96, :]
+    
+    if np.sum(voiced_mask) > 0:
+        phase_jump_rate = np.sum((np.abs(phase_diff2_wrapped_low) > np.pi * 0.5) & voiced_mask) / np.sum(voiced_mask)
+    else:
+        phase_jump_rate = np.sum(np.abs(phase_diff2_wrapped_low) > np.pi * 0.5) / phase_diff2_wrapped_low.size
 
     # ---- SIGNAL 2: Pitch Jitter ----
     # Use probabilistic YIN algorithm to extract fundamental frequency

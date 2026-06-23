@@ -52,7 +52,8 @@ class PhaseGuardL1(nn.Module):
         
         # Modify the classification head to output 1 dimension (probability of being Fake/AI)
         # MobileNetV3 Small classifier is: Sequential(Linear(576, 1024), Hardswish(), Dropout(0.2), Linear(1024, num_classes))
-        # Thus classifier[3] is the final linear layer
+        # Increase dropout to 0.5 to prevent overfitting
+        self.backbone.classifier[2] = nn.Dropout(p=0.5, inplace=True)
         self.backbone.classifier[3] = nn.Linear(1024, 1)
         
     def forward(self, x):
@@ -118,9 +119,9 @@ def train():
     # Initialize model, loss criterion, and optimizer
     model = PhaseGuardL1().to(device)
     criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-3)
     
-    epochs = 20
+    epochs = 5
     print("\nStarting Training Layer 1...")
     
     for epoch in range(epochs):
