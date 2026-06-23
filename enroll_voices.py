@@ -8,20 +8,27 @@ sys.modules['flair.models'] = MagicMock()
 sys.modules['spacy'] = MagicMock()
 sys.modules['spacy.tokens'] = MagicMock()
 
+# Mock torchaudio.io to support SpeechBrain 1.0.0 imports on newer torchaudio versions
+mock_io = MagicMock()
+mock_io.StreamReader = MagicMock()
+sys.modules['torchaudio.io'] = mock_io
+
 import os
 import json
 import torch
 import torchaudio
-from speechbrain.pretrained import SpeakerRecognition
+torchaudio.io = mock_io
+try:
+    from speechbrain.inference.speaker import SpeakerRecognition
+except ImportError:
+    from speechbrain.pretrained import SpeakerRecognition
 
 # Load the pre-trained ECAPA-TDNN model (downloads on first run, ~100MB)
 print("Loading ECAPA-TDNN speaker recognition model...")
 try:
-    from speechbrain.utils.fetching import LocalStrategy
     verifier = SpeakerRecognition.from_hparams(
         source="speechbrain/spkrec-ecapa-voxceleb",
-        savedir="pretrained_models/ecapa",
-        local_strategy=LocalStrategy.COPY
+        savedir="pretrained_models/ecapa"
     )
     print("Model loaded successfully!")
 except Exception as e:

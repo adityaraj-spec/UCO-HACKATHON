@@ -8,9 +8,17 @@ sys.modules['flair.models'] = MagicMock()
 sys.modules['spacy'] = MagicMock()
 sys.modules['spacy.tokens'] = MagicMock()
 
+# Mock torchaudio.io to support SpeechBrain 1.0.0 imports on newer torchaudio versions
+mock_io = MagicMock()
+mock_io.StreamReader = MagicMock()
+sys.modules['torchaudio.io'] = mock_io
+
 import streamlit as st
 import torch
 import torchaudio
+torchaudio.io = mock_io
+if not hasattr(torchaudio, "list_audio_backends"):
+    torchaudio.list_audio_backends = lambda: ["soundfile"]
 import librosa
 import numpy as np
 import plotly.graph_objects as go
@@ -143,30 +151,38 @@ st.markdown("""
 @st.cache_resource
 def load_models_db():
     """Loads the Layer 1 MobileNet weights and Layer 2 ECAPA speaker profiles."""
-    from speechbrain.pretrained import SpeakerRecognition
+    try:
+        from speechbrain.inference.speaker import SpeakerRecognition
+    except ImportError:
+        from speechbrain.pretrained import SpeakerRecognition
     
     # 1. Load Layer 1 Model
     l1_model = PhaseGuardL1()
     l1_model.load_state_dict(torch.load("models/layer1_mobilenet.pth", map_location='cpu'))
     l1_model.eval()
     
-    # 2. Load Layer 2 Pretrained Model
-    from speechbrain.utils.fetching import LocalStrategy
-    verifier = SpeakerRecognition.from_hparams(
-        source="speechbrain/spkrec-ecapa-voxceleb",
-        savedir="pretrained_models/ecapa",
-        local_strategy=LocalStrategy.COPY
-    )
+    # 2. Load Layer 2 Pretrained Model (Optional)
+    verifier = None
+    try:
+        verifier = SpeakerRecognition.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir="pretrained_models/ecapa"
+        )
+    except Exception as e:
+        print(f"Layer 2 SpeechBrain verifier loading skipped or failed: {e}")
     
-    # 3. Load Enrolled Database
-    voiceprints = torch.load("models/voiceprints.pth", map_location='cpu')
+    # 3. Load Enrolled Database (Optional)
+    voiceprints = {}
+    if os.path.exists("models/voiceprints.pth"):
+        try:
+            voiceprints = torch.load("models/voiceprints.pth", map_location='cpu')
+        except Exception as e:
+            print(f"Layer 2 voiceprints loading failed: {e}")
     
     return l1_model, verifier, voiceprints
 
-# Check model availability first
-models_ready = True
-if not os.path.exists("models/layer1_mobilenet.pth") or not os.path.exists("models/voiceprints.pth"):
-    models_ready = False
+# Check model availability first (Only Layer 1 is strictly required now)
+models_ready = os.path.exists("models/layer1_mobilenet.pth")
 
 # ==========================================
 # AUDIO PREDICTION PIPELINE
@@ -331,23 +347,31 @@ with st.container():
 # Loading state
 if not models_ready:
     st.error("🚨 System Status: Models Offline")
-    st.info("The required model files (`layer1_mobilenet.pth` and `voiceprints.pth`) are missing. Please generate the synthetic dataset and train the model using: \n`python generate_simulated_data.py`\n`python build_dataset.py`\n`python train_layer1.py`\n`python enroll_voices.py`")
+    st.info("The required model files (`layer1_mobilenet.pth`) are missing. Please train the model first using train_layer1.py.")
 else:
     # Load models
-    with st.spinner("Initializing models and loading speaker profiles..."):
+    with st.spinner("Initializing PhaseGuard..."):
         l1_model, verifier, voiceprints = load_models_db()
-    st.sidebar.success("✅ Models and Profiles Active")
     
+    if verifier is not None and voiceprints:
+        st.sidebar.success("✅ Layer 1 & 2 Models Active")
+    else:
+        st.sidebar.info("💡 Layer 1 (AI vs Real) Active (Layer 2 Offline)")
+        
     # ==========================================
     # SIDEBAR DEMO SETTINGS
     # ==========================================
     with st.sidebar:
         st.markdown("### 🎯 Enrolled Bank Profile")
-        selected_speaker = st.selectbox(
-            "Select customer account to verify:",
-            options=list(voiceprints.keys()),
-            help="Choose the bank customer whom the caller is claiming to be."
-        )
+        if voiceprints:
+            selected_speaker = st.selectbox(
+                "Select customer account to verify:",
+                options=list(voiceprints.keys()),
+                help="Choose the bank customer whom the caller is claiming to be."
+            )
+        else:
+            st.warning("No Layer 2 profiles enrolled.")
+            selected_speaker = None
         
         st.markdown("---")
         st.markdown("### 🛠️ Calibration Thresholds")
@@ -743,7 +767,8 @@ else:
         
         # System Flowchart
         st.markdown("### System Processing Flow")
-        st.mermaid("""
+        st.markdown("""
+        ```mermaid
         graph TD
             A[Incoming Audio Waveform] --> B[Standardize: 16kHz Mono 2.0s]
             B --> C[Compute Mel-Spectrogram]
@@ -765,6 +790,7 @@ else:
             classDef clean fill:#e8f5e9,stroke:#10b981,stroke-width:2px,color:#10b981;
             class F,J fraud;
             class K clean;
+        ```
         """)
         
         st.divider()
