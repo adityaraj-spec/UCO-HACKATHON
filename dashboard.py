@@ -25,7 +25,7 @@ from scipy.ndimage import zoom
 
 # Import PhaseGuard helper modules
 from preprocess import load_and_standardize, audio_to_mel_spectrogram, extract_5_signals
-from retrain_v2 import PhaseGuardL1_V2
+from train_layer1 import PhaseGuardL1
 
 # ==========================================
 # PAGE CONFIGURATION & THEME
@@ -144,14 +144,14 @@ st.markdown("""
 # ==========================================
 @st.cache_resource
 def load_models_db():
-    """Loads the Layer 1 V2 MobileNet weights (2-channel input)."""
-    l1_model = PhaseGuardL1_V2()
-    l1_model.load_state_dict(torch.load("models/layer1_v2_best.pth", map_location='cpu'))
+    """Loads the Layer 1 MobileNet weights."""
+    l1_model = PhaseGuardL1()
+    l1_model.load_state_dict(torch.load("models/layer1_mobilenet.pth", map_location='cpu'))
     l1_model.eval()
     return l1_model
 
 # Check model availability first
-models_ready = os.path.exists("models/layer1_v2_best.pth")
+models_ready = os.path.exists("models/layer1_mobilenet.pth")
 
 # ==========================================
 # AUDIO PREDICTION PIPELINE
@@ -177,16 +177,22 @@ def analyze_voice_clip(audio_path, l1_model, l1_thresh, enable_overrides=False):
     else:
         signals = extract_5_signals(audio)
     
-    # Convert waveform to 2-channel Mel-spectrogram (Magnitude + Phase derivative)
-    from rebuild_dataset import audio_to_dual_channel_spectrogram
-    spec_2ch = audio_to_dual_channel_spectrogram(audio)
+    # Convert waveform to Mel-spectrogram
+    mel = audio_to_mel_spectrogram(audio)
+    if mel.shape[1] != 128:
+        mel_resized = zoom(mel, (1, 128 / mel.shape[1]))
+    else:
+        mel_resized = mel
+    
+    # Normalize mel
+    mel_min = mel_resized.min()
+    mel_max = mel_resized.max()
+    mel_norm = (mel_resized - mel_min) / (mel_max - mel_min + 1e-10)
     
     # Run Layer 1 CNN Inference
-    spec_tensor = torch.FloatTensor(spec_2ch).unsqueeze(0)  # (1, 2, 128, 128)
+    mel_tensor = torch.FloatTensor(mel_norm).unsqueeze(0).unsqueeze(0)  # (1, 1, 128, 128)
     with torch.no_grad():
-        ai_probability = float(l1_model(spec_tensor)[0][0])
-        
-    mel_norm = spec_2ch[0]  # Send normalized magnitude channel for UI visualization
+        ai_probability = float(l1_model(mel_tensor)[0][0])
         
     # Apply bidirectional physical signal consistency check to prevent out-of-distribution errors
     is_physically_real = False
