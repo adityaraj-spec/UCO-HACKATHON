@@ -8,15 +8,9 @@ sys.modules['flair.models'] = MagicMock()
 sys.modules['spacy'] = MagicMock()
 sys.modules['spacy.tokens'] = MagicMock()
 
-# Mock torchaudio.io to support SpeechBrain 1.0.0 imports on newer torchaudio versions
-mock_io = MagicMock()
-mock_io.StreamReader = MagicMock()
-sys.modules['torchaudio.io'] = mock_io
-
 import streamlit as st
 import torch
 import torchaudio
-torchaudio.io = mock_io
 if not hasattr(torchaudio, "list_audio_backends"):
     torchaudio.list_audio_backends = lambda: ["soundfile"]
 import librosa
@@ -37,7 +31,7 @@ from train_layer1 import PhaseGuardL1
 # PAGE CONFIGURATION & THEME
 # ==========================================
 st.set_page_config(
-    page_title="PhaseGuard - Voice Forensics",
+    page_title="PhaseGuard - Layer 1 AI Voice Authenticity",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -146,52 +140,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CACHED MODEL LOADERS
+# CACHED MODEL LOADER (LAYER 1 ONLY)
 # ==========================================
 @st.cache_resource
 def load_models_db():
-    """Loads the Layer 1 MobileNet weights and Layer 2 ECAPA speaker profiles."""
-    try:
-        from speechbrain.inference.speaker import SpeakerRecognition
-    except ImportError:
-        from speechbrain.pretrained import SpeakerRecognition
-    
-    # 1. Load Layer 1 Model
+    """Loads the Layer 1 MobileNet weights."""
     l1_model = PhaseGuardL1()
     l1_model.load_state_dict(torch.load("models/layer1_mobilenet.pth", map_location='cpu'))
     l1_model.eval()
-    
-    # 2. Load Layer 2 Pretrained Model (Optional)
-    verifier = None
-    try:
-        verifier = SpeakerRecognition.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb",
-            savedir="pretrained_models/ecapa"
-        )
-    except Exception as e:
-        print(f"Layer 2 SpeechBrain verifier loading skipped or failed: {e}")
-    
-    # 3. Load Enrolled Database (Optional)
-    voiceprints = {}
-    if os.path.exists("models/voiceprints.pth"):
-        try:
-            voiceprints = torch.load("models/voiceprints.pth", map_location='cpu')
-        except Exception as e:
-            print(f"Layer 2 voiceprints loading failed: {e}")
-    
-    return l1_model, verifier, voiceprints
+    return l1_model
 
-# Check model availability first (Only Layer 1 is strictly required now)
+# Check model availability first
 models_ready = os.path.exists("models/layer1_mobilenet.pth")
 
 # ==========================================
 # AUDIO PREDICTION PIPELINE
 # ==========================================
-def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_speaker, l1_thresh, l2_thresh):
+def analyze_voice_clip(audio_path, l1_model, l1_thresh):
     """
-    Executes PhaseGuard's dual-layer engine:
-    Layer 1: Phase check & physical sensors (CNN model & metric limits)
-    Layer 2: Speaker validation (ECAPA-TDNN cosine score)
+    Executes PhaseGuard's Layer 1 engine:
+    - Mel-spectrogram through MobileNetV3 CNN
+    - Physics-based consistency overrides
     """
     # Load full audio for physical features to avoid padding/truncation artifacts
     try:
@@ -235,20 +204,15 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
         if signals['phase_jump_rate'] < 0.11 and 0.0015 <= signals['jitter'] <= 0.05:
             is_physically_real = True
         # Case B: Compressed/echo-cancelled real voice (e.g., WhatsApp audio)
-        # It may have elevated PJR, but retains organic jitter and natural room noise floor
         elif signals['noise_floor'] > 0.0006 and 0.0015 <= signals['jitter'] <= 0.05:
             if signals['phase_jump_rate'] < 0.23:
                 is_physically_real = True
         # Case C: Noise-gated/edited real voice (e.g., edited in Audacity)
-        # Has digital silence, but retains organic human jitter and moderately low PJR
         elif signals['noise_floor'] <= 0.0006 and 0.0015 <= signals['jitter'] <= 0.05:
             if signals['phase_jump_rate'] < 0.14:
                 is_physically_real = True
                 
-        # 2. Override false negatives (Fake voice classified as Real, e.g., demo.wav)
-        # A synthetic override should only trigger if the voice exhibits both AI vocoder signatures
-        # (near-zero noise floor or erratic/robotic pitch) AND phase discontinuities,
-        # AND it does NOT have organic human jitter.
+        # 2. Override false negatives (Fake voice classified as Real)
         has_ai_jitter = (signals['jitter'] < 0.0012) or (signals['jitter'] > 0.055)
         
         if signals['phase_jump_rate'] > 0.12:
@@ -266,50 +230,17 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
         # Override to FAKE
         ai_probability = max(ai_probability, 0.88)
         
-    # Layer 1 Block Decision
+    # Block Decision
     layer1_blocked = ai_probability > l1_thresh
     
-    # Run Layer 2 Inference (Speaker Verification)
-    layer2_score = None
-    if selected_speaker in voiceprints:
-        try:
-            signal_np, sr = sf.read(audio_path)
-            if sr != 16000:
-                signal_np = librosa.resample(signal_np, orig_sr=sr, target_sr=16000)
-                sr = 16000
-            signal = torch.FloatTensor(signal_np)
-            if len(signal.shape) == 1:
-                signal = signal.unsqueeze(0)
-            else:
-                signal = signal.t()
-            
-            with torch.no_grad():
-                live_emb = verifier.encode_batch(signal).flatten()
-            stored_emb = voiceprints[selected_speaker].flatten()
-            
-            # Compute similarity
-            layer2_score = float(torch.dot(live_emb, stored_emb) / (torch.norm(live_emb) * torch.norm(stored_emb)))
-        except Exception as e:
-            st.error(f"Error during speaker verification: {e}")
-            
     # Risk Assessment Logic
-    blocked_at = None
+    risk_score = ai_probability * 100
+    
     if layer1_blocked:
-        risk_score = ai_probability * 100
         risk_level = "FRAUD ALERT"
         blocked_at = "Layer 1 (AI Voice Artifacts Detected)"
-    elif layer2_score is not None and layer2_score < l2_thresh:
-        risk_score = 85.0
-        risk_level = "FRAUD ALERT"
-        blocked_at = f"Layer 2 (Identity Verification Mismatch: Score {layer2_score:.2f} < {l2_thresh})"
     else:
-        # Compute combined risk score
-        l2_risk_component = max(0.0, l2_thresh - (layer2_score if layer2_score is not None else l2_thresh)) / l2_thresh
-        risk_score = (ai_probability * 0.4 + l2_risk_component * 0.6) * 100
-        
-        # Clamp to 0-100
-        risk_score = min(100.0, max(0.0, risk_score))
-        
+        blocked_at = None
         if risk_score < 30.0:
             risk_level = "CLEAN"
         elif risk_score < 60.0:
@@ -321,7 +252,6 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
         'signals': signals,
         'mel_spectrogram': mel_norm,
         'ai_probability': ai_probability,
-        'layer2_score': layer2_score,
         'risk_score': risk_score,
         'risk_level': risk_level,
         'blocked_at': blocked_at,
@@ -334,9 +264,9 @@ def analyze_voice_clip(audio_path, l1_model, verifier, voiceprints, selected_spe
 with st.container():
     st.markdown("""
     <div class="title-banner">
-        <h1 style="margin: 0; font-size: 2.5rem; font-weight: 800; background: linear-gradient(to right, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">🛡️ PhaseGuard</h1>
+        <h1 style="margin: 0; font-size: 2.5rem; font-weight: 800; background: linear-gradient(to right, #3b82f6, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">🛡️ PhaseGuard - Layer 1</h1>
         <p style="margin: 5px 0 0 0; font-size: 1.1rem; color: #94a3b8; font-weight: 400;">
-            Real-Time Two-Layer Voice Forensics for Banking Security & Deepfake Mitigation
+            Real-Time AI Voice Authenticity Scan & Deepfake Interception
         </p>
         <p style="margin: 2px 0 0 0; font-size: 0.85rem; color: #64748b; font-style: italic;">
             UCO Bank Hackathon 2026 — Built by Team Ozymandias
@@ -347,55 +277,27 @@ with st.container():
 # Loading state
 if not models_ready:
     st.error("🚨 System Status: Models Offline")
-    st.info("The required model files (`layer1_mobilenet.pth`) are missing. Please train the model first using train_layer1.py.")
+    st.info("The required Layer 1 model file (`models/layer1_mobilenet.pth`) is missing. Please train the model first using train_layer1.py.")
 else:
-    # Load models
-    with st.spinner("Initializing PhaseGuard..."):
-        l1_model, verifier, voiceprints = load_models_db()
+    # Load model
+    with st.spinner("Initializing PhaseGuard Layer 1..."):
+        l1_model = load_models_db()
+    st.sidebar.success("✅ Layer 1 CNN Model Active")
     
-    if verifier is not None and voiceprints:
-        st.sidebar.success("✅ Layer 1 & 2 Models Active")
-    else:
-        st.sidebar.info("💡 Layer 1 (AI vs Real) Active (Layer 2 Offline)")
-        
     # ==========================================
-    # SIDEBAR DEMO SETTINGS
+    # SIDEBAR SETTINGS (LAYER 1 ONLY)
     # ==========================================
     with st.sidebar:
-        st.markdown("### 🎯 Enrolled Bank Profile")
-        if voiceprints:
-            selected_speaker = st.selectbox(
-                "Select customer account to verify:",
-                options=list(voiceprints.keys()),
-                help="Choose the bank customer whom the caller is claiming to be."
-            )
-        else:
-            st.warning("No Layer 2 profiles enrolled.")
-            selected_speaker = None
-        
-        st.markdown("---")
-        st.markdown("### 🛠️ Calibration Thresholds")
+        st.markdown("### 🛠️ Calibration Settings")
         l1_threshold = st.slider(
-            "Layer 1 Block Threshold (AI Probability)",
+            "AI Voice Block Threshold",
             min_value=0.50, max_value=0.95, value=0.70, step=0.05,
-            help="If AI voice probability exceeds this, Layer 1 immediately flags FRAUD."
-        )
-        l2_threshold = st.slider(
-            "Layer 2 Fraud Threshold (Cosine Similarity)",
-            min_value=0.40, max_value=0.85, value=0.65, step=0.05,
-            help="Threshold for ECAPA voice ID comparison. Scores below this are flagged as FRAUD."
+            help="If AI voice probability exceeds this, Layer 1 immediately flags a FRAUD ALERT."
         )
         
         st.markdown("---")
-        st.markdown("### 💡 Demo Cheat Sheet")
-        st.markdown("""
-        - **Vishal**: Male (F0 ~120Hz)
-        - **Abhinav**: Male (F0 ~135Hz)
-        - **Aditya**: Male (F0 ~150Hz)
-        - **Dhruv**: Male (F0 ~110Hz)
-        
-        *To test clones, upload files from `data/clones/[name]/` or trigger mock stream.*
-        """)
+        st.markdown("### 💡 Acoustic Diagnostics")
+        st.write("Verifying frame-boundary phase anomalies, artificial jitter, spectral distribution smoothness, and digital silence noise floors.")
         
     # ==========================================
     # TABS DESIGN
@@ -426,29 +328,22 @@ else:
                 progress_placeholder = st.empty()
                 progress_bar = st.progress(0)
                 
-                progress_placeholder.info("Step 1/4: Resampling audio & standardizing amplitude...")
-                progress_bar.progress(25)
-                time.sleep(0.3)
+                progress_placeholder.info("Step 1/3: Resampling audio & standardizing amplitude...")
+                progress_bar.progress(33)
+                time.sleep(0.2)
                 
-                progress_placeholder.info("Step 2/4: Extracting 5-signal physical features...")
-                progress_bar.progress(50)
-                time.sleep(0.3)
+                progress_placeholder.info("Step 2/3: Extracting 5 physics-based acoustic signals...")
+                progress_bar.progress(66)
+                time.sleep(0.2)
                 
-                progress_placeholder.info("Step 3/4: running Layer 1 CNN (MobileNetV3) for deepfake detection...")
-                progress_bar.progress(75)
-                time.sleep(0.3)
-                
-                progress_placeholder.info("Step 4/4: Scanning Layer 2 Speaker Profiles (ECAPA-TDNN)...")
+                progress_placeholder.info("Step 3/3: Running Layer 1 CNN (MobileNetV3) for deepfake detection...")
                 progress_bar.progress(95)
                 
-                results = analyze_voice_clip(
-                    tmp_path, l1_model, verifier, voiceprints, 
-                    selected_speaker, l1_threshold, l2_threshold
-                )
+                results = analyze_voice_clip(tmp_path, l1_model, l1_threshold)
                 
                 progress_bar.progress(100)
                 progress_placeholder.success("Forensic Scan Complete!")
-                time.sleep(0.2)
+                time.sleep(0.1)
                 progress_placeholder.empty()
                 
                 # Cleanup temp file
@@ -463,27 +358,27 @@ else:
                     # Risk Level Verdict Display
                     rl = results['risk_level']
                     if rl == "CLEAN":
-                        st.markdown(f'<div class="verdict-card verdict-clean">🟢 VERDICT: CLEAN ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
-                        st.info("✅ Verified. Voice matches account credentials. The call is clean to proceed with transaction.")
+                        st.markdown(f'<div class="verdict-card verdict-clean">🟢 VERDICT: REAL HUMAN VOICE ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                        st.info("✅ Verified. Audio shows organic human vocal patterns. The call is clean.")
                     elif rl == "SUSPICIOUS":
-                        st.markdown(f'<div class="verdict-card verdict-suspicious">🟡 VERDICT: SUSPICIOUS ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
-                        st.warning("⚠️ Warning: Slight variance detected. Recommended: Query customer verification questions.")
+                        st.markdown(f'<div class="verdict-card verdict-suspicious">🟡 VERDICT: SUSPICIOUS AUTHENTICITY ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                        st.warning("⚠️ Warning: Slight acoustic anomalies detected. Verify caller credentials.")
                     elif rl == "HIGH RISK":
-                        st.markdown(f'<div class="verdict-card verdict-highrisk">🟠 VERDICT: HIGH RISK ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
-                        st.warning("🔒 Alert: High anomaly risk. Triggering out-of-band OTP SMS verification.")
+                        st.markdown(f'<div class="verdict-card verdict-highrisk">🟠 VERDICT: HIGH RISK DEEPFAKE ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                        st.warning("🔒 Alert: High anomaly risk. Triggering out-of-band validation.")
                     else:  # FRAUD ALERT
                         st.markdown(f'<div class="verdict-card verdict-fraud">🔴 BLOCK ACTION: FRAUD ALERT ({results["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
-                        st.error(f"🚫 CALL INTERCEPTED: Blocked at {results['blocked_at']}")
+                        st.error(f"🚫 CALL INTERCEPTED: {results['blocked_at']}")
                         
                     # Combined Risk Gauge
                     fig = go.Figure(go.Indicator(
                         mode = "gauge+number",
                         value = results['risk_score'],
                         domain = {'x': [0, 1], 'y': [0, 1]},
-                        title = {'text': "Combined Fraud Probability", 'font': {'size': 20}},
+                        title = {'text': "AI Voice Probability", 'font': {'size': 20}},
                         gauge = {
                             'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "white"},
-                            'bar': {'color': "#f43f5e" if results['risk_score'] > 60 else "#3b82f6"},
+                            'bar': {'color': "#f43f5e" if results['risk_score'] > (l1_threshold * 100) else "#3b82f6"},
                             'bgcolor': "rgba(0,0,0,0)",
                             'borderwidth': 1,
                             'bordercolor': "rgba(255,255,255,0.1)",
@@ -495,7 +390,7 @@ else:
                             'threshold': {
                                 'line': {'color': "red", 'width': 4},
                                 'thickness': 0.75,
-                                'value': 70.0
+                                'value': l1_threshold * 100
                             }
                         }
                     ))
@@ -510,31 +405,20 @@ else:
                     
                 with col_right:
                     # Model Sub-metrics
-                    st.markdown("### 🎛️ Dual-Layer Confidence Indices")
-                    
-                    # Layer 1 Metrics
-                    st.markdown(f"**Layer 1 (AI Voice Classifier):**")
+                    st.markdown("### 🎛️ AI Classification Diagnostics")
                     col_l1_score, col_l1_state = st.columns([2, 1])
-                    col_l1_score.metric("AI Voice Probability", f"{results['ai_probability']*100:.2f}%", help="CNN classification score.")
-                    if results['ai_probability'] > l1_thresh:
-                        col_l1_state.markdown("<span style='color: #f43f5e; font-weight: bold;'>⚠️ BLOCKED (Deepfake)</span>", unsafe_allow_html=True)
+                    col_l1_score.metric("AI Score Confidence", f"{results['ai_probability']*100:.2f}%", help="CNN classification raw sigmoid score.")
+                    if results['ai_probability'] > l1_threshold:
+                        col_l1_state.markdown("<h4 style='color: #f43f5e; margin-top: 15px;'>⚠️ DEEPFAKE</h4>", unsafe_allow_html=True)
                     else:
-                        col_l1_state.markdown("<span style='color: #10b981; font-weight: bold;'>✓ PASS (Human)</span>", unsafe_allow_html=True)
+                        col_l1_state.markdown("<h4 style='color: #10b981; margin-top: 15px;'>✓ HUMAN</h4>", unsafe_allow_html=True)
                         
                     st.markdown("---")
-                    
-                    # Layer 2 Metrics
-                    st.markdown(f"**Layer 2 (Speaker Voiceprint Comparison):**")
-                    col_l2_score, col_l2_state = st.columns([2, 1])
-                    if results['layer2_score'] is not None:
-                        col_l2_score.metric(f"Cosine Similarity vs {selected_speaker.capitalize()}", f"{results['layer2_score']:.4f}", help="Cosine similarity of vocal embeddings.")
-                        if results['layer2_score'] >= l2_thresh:
-                            col_l2_state.markdown("<span style='color: #10b981; font-weight: bold;'>✓ PASS (Match)</span>", unsafe_allow_html=True)
-                        else:
-                            col_l2_state.markdown("<span style='color: #f43f5e; font-weight: bold;'>⚠️ IDENTITY MISMATCH</span>", unsafe_allow_html=True)
+                    st.markdown("**Diagnostic Summary**")
+                    if results['ai_probability'] > l1_threshold:
+                        st.error("The voice demonstrates phase stitching anomalies and low pitch jitter characteristic of synthetic speech vocoders.")
                     else:
-                        col_l2_score.write("Layer 2 bypassed (Layer 1 Deepfake detected first).")
-                        col_l2_state.write("-")
+                        st.success("The voice displays organic physiological frequency jitter and continuous, smooth phase transition profiles.")
 
                 st.divider()
                 
@@ -641,7 +525,7 @@ else:
     # ------------------------------------------
     with tab2:
         st.subheader("Interactive Voice Channel Scanner")
-        st.write("Simulate or intercept live telephone voice streams. You can record a live clip from your microphone or trigger pre-packaged audio flows to evaluate call safety instantly.")
+        st.write("Simulate incoming telephone voice streams. You can record a live clip from your microphone or trigger pre-packaged audio flows to evaluate call authenticity instantly.")
         
         col_rec_left, col_rec_right = st.columns([1, 1])
         
@@ -676,55 +560,49 @@ else:
                     st.audio(tmp_rec_path, format="audio/wav")
                     
                     with st.spinner("Processing live channel data..."):
-                        results = analyze_voice_clip(
-                            tmp_rec_path, l1_model, verifier, voiceprints, 
-                            selected_speaker, l1_threshold, l2_threshold
-                        )
+                        results = analyze_voice_clip(tmp_rec_path, l1_model, l1_threshold)
                         
                     os.unlink(tmp_rec_path)
                     st.session_state['live_results'] = results
                 except Exception as ex:
                     st.error(f"Could not initialize audio device: {ex}")
-                    st.info("💡 Tip: On virtual/remote hosts or machines without mics, use Option B below to simulate the exact live stream.")
+                    st.info("💡 Tip: On virtual/remote hosts or machines without mics, use Option B below to simulate incoming streams.")
                     
         with col_rec_right:
             st.markdown("### Option B: Intercept Pre-Packaged Call Flows")
-            st.write("Simulates incoming voice packets arriving at the bank's digital telephony channel (Asterisk ARI).")
+            st.write("Simulates incoming voice packets arriving at the bank's digital telephony channel.")
             
             # Select demo scenario
             scenario_selected = st.selectbox(
                 "Choose simulated call vector:",
                 options=[
-                    "Real Customer Call (Vishal)",
-                    "Deepfake Attack - ElevenLabs Clone (Vishal)",
-                    "Real Customer Call (Abhinav)",
-                    "Deepfake Attack - ElevenLabs Clone (Abhinav)",
-                    "Real Customer Call (Aditya)",
-                    "Deepfake Attack - ElevenLabs Clone (Aditya)",
+                    "Real Human Voice (Sample 1)",
+                    "AI Voice Clone (Sample 1)",
+                    "Real Human Voice (Sample 2)",
+                    "AI Voice Clone (Sample 2)",
+                    "Real Human Voice (Sample 3)",
+                    "AI Voice Clone (Sample 3)",
                 ]
             )
             
             if st.button("⚡ Intercept Stream", use_container_width=True):
                 # Mapping scenarios to files
                 scenario_map = {
-                    "Real Customer Call (Vishal)": ("data/real_voices/vishal/vishal_001.wav", "vishal"),
-                    "Deepfake Attack - ElevenLabs Clone (Vishal)": ("data/clones/vishal/vishal_clone_001.wav", "vishal"),
-                    "Real Customer Call (Abhinav)": ("data/real_voices/abhinav/abhinav_001.wav", "abhinav"),
-                    "Deepfake Attack - ElevenLabs Clone (Abhinav)": ("data/clones/abhinav/abhinav_clone_001.wav", "abhinav"),
-                    "Real Customer Call (Aditya)": ("data/real_voices/aditya/aditya_001.wav", "aditya"),
-                    "Deepfake Attack - ElevenLabs Clone (Aditya)": ("data/clones/aditya/aditya_clone_001.wav", "aditya"),
+                    "Real Human Voice (Sample 1)": "data/real_voices/vishal/vishal_001.wav",
+                    "AI Voice Clone (Sample 1)": "data/clones/vishal/vishal_clone_001.wav",
+                    "Real Human Voice (Sample 2)": "data/real_voices/abhinav/abhinav_001.wav",
+                    "AI Voice Clone (Sample 2)": "data/clones/abhinav/abhinav_clone_001.wav",
+                    "Real Human Voice (Sample 3)": "data/real_voices/aditya/aditya_001.wav",
+                    "AI Voice Clone (Sample 3)": "data/clones/aditya/aditya_clone_001.wav",
                 }
                 
-                path, speaker = scenario_map[scenario_selected]
+                path = scenario_map[scenario_selected]
                 
                 if os.path.exists(path):
                     st.audio(path, format="audio/wav")
                     
                     with st.spinner("Analyzing call stream packets..."):
-                        results = analyze_voice_clip(
-                            path, l1_model, verifier, voiceprints, 
-                            speaker, l1_threshold, l2_threshold
-                        )
+                        results = analyze_voice_clip(path, l1_model, l1_threshold)
                     st.session_state['live_results'] = results
                 else:
                     st.error("Scenario audio files not found. Generate simulated data first.")
@@ -739,31 +617,25 @@ else:
             # Verdict Card
             rl = l_res['risk_level']
             if rl == "CLEAN":
-                st.markdown(f'<div class="verdict-card verdict-clean">🟢 CALL PASSED: Verified Identity ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="verdict-card verdict-clean">🟢 CALL PASSED: Real Human Voice ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
             elif rl == "SUSPICIOUS":
                 st.markdown(f'<div class="verdict-card verdict-suspicious">🟡 CALL WARNING: Enhanced Audit Active ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
             elif rl == "HIGH RISK":
-                st.markdown(f'<div class="verdict-card verdict-highrisk">🟠 SECURE CHECKPOINT: Injecting OTP Verification ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="verdict-card verdict-highrisk">🟠 SECURE CHECKPOINT: Potential Anomaly ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<div class="verdict-card verdict-fraud">🔴 CALL TERMINATED: FRAUD INTERCEPTED ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="verdict-card verdict-fraud">🔴 CALL TERMINATED: FAKE / AI VOICE CLONE ({l_res["risk_score"]:.1f}%)</div>', unsafe_allow_html=True)
                 st.error(f"Blocked due to: {l_res['blocked_at']}")
                 
             # Columns for values
-            col_l1, col_l2, col_risk = st.columns(3)
-            col_l1.metric("Layer 1 (AI Vocal Artifacts)", f"{l_res['ai_probability']*100:.1f}%")
-            
-            if l_res['layer2_score'] is not None:
-                col_l2.metric("Layer 2 (Vocal Cosine Similarity)", f"{l_res['layer2_score']:.4f}")
-            else:
-                col_l2.metric("Layer 2 Status", "Bypassed")
-                
+            col_l1, col_risk = st.columns(2)
+            col_l1.metric("AI Score Confidence", f"{l_res['ai_probability']*100:.1f}%")
             col_risk.metric("Total Fraud Risk Index", f"{l_res['risk_score']:.1f}%")
 
     # ------------------------------------------
     # TAB 3: SYSTEM ARCHITECTURE & THEORY
     # ------------------------------------------
     with tab3:
-        st.subheader("Dual-Layer Auditing Architecture")
+        st.subheader("Layer 1 AI Voice Authenticity Auditing")
         
         # System Flowchart
         st.markdown("### System Processing Flow")
@@ -774,22 +646,17 @@ else:
             B --> C[Compute Mel-Spectrogram]
             B --> D[Extract 5 Acoustic Signals]
             
-            C --> E[Layer 1 CNN: MobileNetV3]
-            D --> E
+            C --> E[CNN Model: MobileNetV3]
+            D --> F[Physics-based Override Engine]
+            E --> F
             
-            E -->|Probability > Threshold| F[Layer 1 Block: AI Voice Detected]
-            E -->|Probability <= Threshold| G[Layer 2 Encoder: ECAPA-TDNN]
-            
-            H[Stored Customer Voiceprint] --> I[Cosine Similarity Comparison]
-            G --> I
-            
-            I -->|Score < Threshold| J[Layer 2 Block: Identity Mismatch]
-            I -->|Score >= Threshold| K[Verify Account: CALL CLEAN]
+            F -->|AI Probability > Threshold| G[Interception Block: AI Voice Detected]
+            F -->|AI Probability <= Threshold| H[Access Granted: REAL HUMAN VOICE]
             
             classDef fraud fill:#ffebee,stroke:#f43f5e,stroke-width:2px,color:#f43f5e;
             classDef clean fill:#e8f5e9,stroke:#10b981,stroke-width:2px,color:#10b981;
-            class F,J fraud;
-            class K clean;
+            class G fraud;
+            class H clean;
         ```
         """)
         
@@ -810,15 +677,14 @@ else:
             PhaseGuard measures sudden frame-to-frame phase differences to locate these neural vocoder stitching seams.
             
             #### 2. Pitch Jitter (🎙️)
-            Real voices wobble organically (muscle micro-tremors cause continuous fundamental frequency $f_0$ variations, typically between 120-220Hz).
+            Real voices wobble organically (muscle micro-tremors cause continuous fundamental frequency $f_0$ variations).
             AI-cloned models generate speech that is either **acoustically static** (pitch stays perfectly constant, appearing flat) or has **artificial random noise** that lacks biological, structural modulation patterns.
-            We use a YIN Pitch Estimator to calculate frame-wise variance.
             """)
             
         with col_t2:
             st.markdown("""
             #### 3. Spectral Flatness (🎚️)
-            Acoustic flatness measures whether the frequency distribution resembles structured, harmonic speech (like high-energy formant peaks and vowel troughs) or flat white noise.
+            Acoustic flatness measures whether the frequency distribution resembles structured, harmonic speech (formant peaks) or flat white noise.
             AI vocoders sometimes smooth out spectral boundaries, yielding an **unnaturally uniform frequency distribution** over time.
             
             #### 4. Background Noise Floor (🔌)
