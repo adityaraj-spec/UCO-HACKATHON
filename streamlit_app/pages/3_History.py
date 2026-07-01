@@ -57,7 +57,7 @@ with tab_verification:
 
         st.dataframe(
             df[["created_at", "similarity_score", "decision"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 
@@ -79,7 +79,7 @@ with tab_risk:
 
         st.dataframe(
             df[["created_at", "risk_score", "risk_level"]],
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
         )
 

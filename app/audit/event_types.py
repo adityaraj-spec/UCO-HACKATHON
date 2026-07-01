@@ -1,0 +1,39 @@
+"""
+app/audit/event_types.py
+
+Standardized collection of security and audit event types for PhaseGuard.
+"""
+
+from enum import Enum
+
+
+class AuditEventType(str, Enum):
+    # Enrollment Pipeline
+    ENROLLMENT_START = "ENROLLMENT_START"
+    ENROLLMENT_SAMPLE_SUBMIT = "ENROLLMENT_SAMPLE_SUBMIT"
+    ENROLLMENT_COMPLETE = "ENROLLMENT_COMPLETE"
+
+    # Authentication Pipeline
+    AUTH_CHALLENGE_ISSUED = "AUTH_CHALLENGE_ISSUED"
+    AUTH_ATTEMPT = "AUTH_ATTEMPT"
+    AUTH_PASS = "AUTH_PASS"
+    AUTH_FAIL = "AUTH_FAIL"
+    AUTH_STEPUP = "AUTH_STEPUP"
+
+    # Consent Lifecycle
+    CONSENT_GRANT = "CONSENT_GRANT"
+    CONSENT_WITHDRAW = "CONSENT_WITHDRAW"
+
+    # Cryptography / HSM
+    TEMPLATE_UPDATE = "TEMPLATE_UPDATE"
+    TEMPLATE_ROTATE = "TEMPLATE_ROTATE"
+    KEY_ROTATED = "KEY_ROTATED"
+
+    # Emergency Access
+    EMERGENCY_CONTACT_REGISTER = "EMERGENCY_CONTACT_REGISTER"
+    EMERGENCY_ACTIVATE = "EMERGENCY_ACTIVATE"
+    EMERGENCY_EXPIRE = "EMERGENCY_EXPIRE"
+    EMERGENCY_TERMINATED = "EMERGENCY_TERMINATED"
+
+    # Context Drift
+    BIOMETRIC_DRIFT_ALERT = "BIOMETRIC_DRIFT_ALERT"

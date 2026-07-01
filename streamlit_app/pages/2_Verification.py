@@ -140,7 +140,7 @@ if verify_clicked:
                 )
             )
             fig_sim.update_layout(height=280, margin=dict(t=50, b=10))
-            st.plotly_chart(fig_sim, use_container_width=True)
+            st.plotly_chart(fig_sim, width='stretch')
 
         with gauge_col2:
             fig_risk = go.Figure(
@@ -164,6 +164,6 @@ if verify_clicked:
                 )
             )
             fig_risk.update_layout(height=280, margin=dict(t=50, b=10))
-            st.plotly_chart(fig_risk, use_container_width=True)
+            st.plotly_chart(fig_risk, width='stretch')
 
         st.json(payload)

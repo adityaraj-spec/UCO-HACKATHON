@@ -87,7 +87,7 @@ with snap_col1:
         )
     )
     fig_gauge.update_layout(height=300, margin=dict(t=50, b=10))
-    st.plotly_chart(fig_gauge, use_container_width=True)
+    st.plotly_chart(fig_gauge, width='stretch')
 
 with snap_col2:
     level_counts = risk_df["risk_level"].value_counts().reset_index()
@@ -102,7 +102,7 @@ with snap_col2:
         color_discrete_map={"CLEAN": "#4caf50", "FRAUD_ALERT": "#f44336"},
     )
     fig_pie.update_layout(height=300, margin=dict(t=50, b=10))
-    st.plotly_chart(fig_pie, use_container_width=True)
+    st.plotly_chart(fig_pie, width='stretch')
 
 st.divider()
 
@@ -124,7 +124,7 @@ fig_trend.add_hline(
     line_color="orange",
     annotation_text="Mid-risk reference (50%)",
 )
-st.plotly_chart(fig_trend, use_container_width=True)
+st.plotly_chart(fig_trend, width='stretch')
 
 # ----------------------------------------------------------------------
 # Verification similarity trend (if available)
@@ -149,7 +149,7 @@ if ok_ver and ver_payload:
         line_color="red",
         annotation_text=f"Verification threshold ({SIMILARITY_THRESHOLD:.2f})",
     )
-    st.plotly_chart(fig_sim, use_container_width=True)
+    st.plotly_chart(fig_sim, width='stretch')
 
 st.divider()
 st.caption(

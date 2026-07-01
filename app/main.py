@@ -27,10 +27,13 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
+from app.middleware.rate_limiter import limiter
 from app.ml.ecapa_service import get_ecapa_service
 from app.utils.exceptions import PhaseGuardError
 
@@ -64,19 +67,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PhaseGuard - Layer 2 (Speaker Verification)",
+    title="PhaseGuard — Layer 2 Voice Biometric Authentication",
     description=(
-        "Production backend for PhaseGuard's Layer 2 identity-verification "
-        "engine. Enrolls customer voiceprints using SpeechBrain's "
-        "ECAPA-TDNN model and verifies live audio against stored "
-        "voiceprints using cosine similarity, feeding results into the "
-        "PhaseGuard Risk Engine."
+        "Production-grade, RBI-compliant voice biometric authentication engine. "
+        "Supports multi-sample enrollment, cancelable biometrics (BioHash), "
+        "adaptive per-user thresholds, anti-spoofing liveness checks, DPDP-compliant "
+        "consent management, emergency trustee access, and immutable chained audit logs. "
+        "Integrates Kafka for SIEM event streaming and FAISS for ANN vector search."
     ),
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
-# CORS - permissive by default for hackathon/demo use; tighten in production.
+# Attach SlowAPI rate-limiting state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
