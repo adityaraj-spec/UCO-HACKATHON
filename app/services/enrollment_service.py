@@ -39,6 +39,9 @@ from app.repositories.layer2.anchor_embedding_repo import AnchorEmbeddingReposit
 from app.repositories.layer2.threshold_repo import UserThresholdRepository
 from app.utils.audio_utils import cleanup_temp_file, save_upload_to_temp
 
+from app.repositories.user_repository import UserRepository
+from app.utils.exceptions import UserNotFoundError, InsufficientRecordingsError
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -48,6 +51,7 @@ class EnrollmentService:
 
     def __init__(self, session: AsyncSession) -> None:
         self.db = session
+        self.user_repo = UserRepository(session)
         self.enrollment_repo = EnrollmentSessionRepository(session)
         self.anchor_repo = AnchorEmbeddingRepository(session)
         self.threshold_repo = UserThresholdRepository(session)
@@ -56,6 +60,130 @@ class EnrollmentService:
         self.ecapa = get_ecapa_service()
         self.vault = get_template_vault()
         self.audit = get_audit_vault()
+
+    async def enroll(
+        self,
+        user_id: uuid.UUID,
+        audio_files: list[UploadFile],
+        ip_address: str = "0.0.0.0",
+    ) -> dict:
+        """
+        Single-call enrollment: process all provided audio files, compute the
+        mean anchor embedding, encrypt via BioHash vault, and persist.
+
+        Returns a dict compatible with EnrollmentResponse:
+          success, user_id, recording_count, embedding_dimension, message
+        """
+        # Check user existence
+        try:
+            user = await self.user_repo.get_by_id(user_id)
+            if not user:
+                raise UserNotFoundError(str(user_id))
+
+            if not audio_files:
+                raise ValueError("At least one audio file must be provided.")
+
+            import soundfile as sf
+
+            embeddings = []
+            temp_paths: list[str] = []
+
+            try:
+                for audio_file in audio_files:
+                    temp_path = await save_upload_to_temp(audio_file)
+                    temp_paths.append(temp_path)
+
+                    proc = self.audio_pipeline.process_file(temp_path, for_enrollment=True)
+                    if not proc.accepted:
+                        logger.warning(
+                            "Sample '%s' rejected: %s", audio_file.filename, proc.rejection_reason
+                        )
+                        continue  # skip bad samples but don't abort
+
+                    denoised_temp = os.path.join(
+                        settings.TEMP_UPLOAD_DIR, f"denoised_{uuid.uuid4().hex}.wav"
+                    )
+                    os.makedirs(settings.TEMP_UPLOAD_DIR, exist_ok=True)
+                    sf.write(denoised_temp, proc.waveform, proc.sample_rate)
+                    try:
+                        emb = self.ecapa.extract_embedding(denoised_temp)
+                        embeddings.append(emb)
+                    finally:
+                        cleanup_temp_file(denoised_temp)
+
+            finally:
+                for p in temp_paths:
+                    cleanup_temp_file(p)
+
+            if not embeddings:
+                raise InsufficientRecordingsError(provided=0, required=1)
+
+            # Aggregate
+            anchor_emb = np.mean(embeddings, axis=0)
+
+            # Encrypt & store
+            enc_blob, nonce, val_hash, key_used = self.vault.generate_template(user_id, anchor_emb)
+            await self.anchor_repo.create(
+                user_id=user_id,
+                encrypted_embedding=enc_blob,
+                encryption_nonce=nonce,
+                embedding_hash=val_hash,
+                key_id=key_used,
+            )
+
+            # Seed rolling pool with 3 copies of the anchor
+            for pos in range(3):
+                r_enc_blob, r_nonce, r_val_hash, r_key_used = self.vault.generate_template(
+                    user_id, anchor_emb
+                )
+                roll_entry = RollingEmbedding(
+                    user_id=user_id,
+                    encrypted_embedding=r_enc_blob,
+                    encryption_nonce=r_nonce,
+                    embedding_hash=r_val_hash,
+                    key_id=r_key_used,
+                    auth_similarity_score=1.0,
+                    cosine_distance_from_anchor=0.0,
+                    pool_position=pos,
+                    is_active=True,
+                )
+                self.db.add(roll_entry)
+
+            # Default thresholds
+            ut = await self.threshold_repo.get_or_create(user_id)
+            ut.threshold_baseline = settings.SIMILARITY_THRESHOLD
+            ut.threshold_current = settings.SIMILARITY_THRESHOLD
+            ut.consecutive_failures = 0
+            self.db.add(ut)
+
+            # FAISS index update
+            decrypted_anchor = self.vault.decrypt_template(user_id, enc_blob, nonce, key_used)
+            from app.search.faiss_index import get_faiss_manager
+            faiss_manager = get_faiss_manager()
+            faiss_manager.add_vector(str(user_id), decrypted_anchor)
+
+            logger.info(
+                "Enrollment completed for user %s: %d recording(s), embedding dim %d",
+                user_id,
+                len(embeddings),
+                anchor_emb.shape[0],
+            )
+
+            from app.schemas.enrollment import EnrollmentResponse
+            return EnrollmentResponse(
+                success=True,
+                user_id=user_id,
+                recording_count=len(embeddings),
+                embedding_dimension=int(anchor_emb.shape[0]),
+                message=(
+                    f"Voiceprint enrolled successfully from {len(embeddings)} recording(s)."
+                ),
+            )
+
+        except Exception:
+            await self.db.rollback()
+            raise
+
 
     async def create_enrollment_session(
         self,
@@ -106,6 +234,8 @@ class EnrollmentService:
         sess = await self.enrollment_repo.get_by_id(session_id)
         if not sess or sess.user_id != user_id or sess.status != "IN_PROGRESS":
             raise ValueError("Invalid or inactive enrollment session.")
+        if sess.expires_at and sess.expires_at.replace(tzinfo=None) < __import__('datetime').datetime.utcnow():
+            raise ValueError("Enrollment session has expired. Please start a new session.")
 
         temp_path = None
         try:
@@ -121,22 +251,22 @@ class EnrollmentService:
             # (Note: we bypass normalizer in ecapa_service if already denoised/16k)
             # Create a temporary path for the denoised waveform because ecapa_service expects paths
             import soundfile as sf
-            denoised_temp = os.path.join(settings.TEMP_DIR, f"denoised_{uuid.uuid4().hex}.wav")
-            os.makedirs(settings.TEMP_DIR, exist_ok=True)
+            denoised_temp = os.path.join(settings.TEMP_UPLOAD_DIR, f"denoised_{uuid.uuid4().hex}.wav")
+            os.makedirs(settings.TEMP_UPLOAD_DIR, exist_ok=True)
             sf.write(denoised_temp, proc.waveform, proc.sample_rate)
 
             try:
-                emb = self.ecapa.get_embedding(denoised_temp)
+                emb = self.ecapa.extract_embedding(denoised_temp)
             finally:
                 cleanup_temp_file(denoised_temp)
 
             # Step 5: Save processed sample wave vectors and SNRs temporarily
             # For this banking system, we accumulate sample results inside the Session
             # object cache or a temp file directory bound to the session.
-            records_dir = os.path.join(settings.TEMP_DIR, f"sess_samples_{session_id}")
+            records_dir = os.path.join(settings.TEMP_UPLOAD_DIR, f"sess_samples_{session_id}")
             os.makedirs(records_dir, exist_ok=True)
 
-            sample_idx = sess.samples_submitted
+            sample_idx = sess.samples_received
             np.save(os.path.join(records_dir, f"sample_{sample_idx}.npy"), emb)
 
             # Save quality metadata for aggregations later
@@ -150,7 +280,8 @@ class EnrollmentService:
                     "quality_score": proc.quality.quality_score,
                 }, f)
 
-            sess.samples_submitted += 1
+            sess.samples_received += 1
+            sess.samples_accepted += 1
             await self.db.flush()
 
             # Record event in audit vault
@@ -160,20 +291,20 @@ class EnrollmentService:
                 user_id=user_id,
                 actor="CUSTOMER",
                 ip_address=ip_address,
-                details=f"Enrollment sample {sess.samples_submitted}/5 submitted.",
+                details=f"Enrollment sample {sess.samples_accepted}/{sess.samples_required} submitted.",
                 payload={
                     "session_id": str(session_id),
-                    "sample_number": sess.samples_submitted,
+                    "sample_number": sess.samples_accepted,
                     "snr_db": proc.quality.snr_db,
                     "quality_score": proc.quality.quality_score,
                 }
             )
 
-            is_complete = sess.samples_submitted >= sess.samples_required
+            is_complete = sess.samples_accepted >= sess.samples_required
 
             return {
                 "success": True,
-                "samples_submitted": sess.samples_submitted,
+                "samples_submitted": sess.samples_accepted,
                 "samples_required": sess.samples_required,
                 "is_complete": is_complete,
                 "quality_report": {
@@ -201,10 +332,10 @@ class EnrollmentService:
         if not sess or sess.user_id != user_id or sess.status != "IN_PROGRESS":
             raise ValueError("Invalid or inactive enrollment session.")
 
-        if sess.samples_submitted < sess.samples_required:
-            raise ValueError(f"Insufficient samples collected: {sess.samples_submitted}/{sess.samples_required}")
+        if sess.samples_accepted < sess.samples_required:
+            raise ValueError(f"Insufficient samples collected: {sess.samples_accepted}/{sess.samples_required}")
 
-        records_dir = os.path.join(settings.TEMP_DIR, f"sess_samples_{session_id}")
+        records_dir = os.path.join(settings.TEMP_UPLOAD_DIR, f"sess_samples_{session_id}")
         if not os.path.exists(records_dir):
             raise FileNotFoundError("Enrollment session files missing or deleted.")
 
@@ -217,7 +348,7 @@ class EnrollmentService:
             dur_vals = []
 
             import json
-            for i in range(sess.samples_required):
+            for i in range(sess.samples_accepted):
                 emb_file = os.path.join(records_dir, f"sample_{i}.npy")
                 meta_file = os.path.join(records_dir, f"meta_{i}.json")
 
@@ -282,7 +413,7 @@ class EnrollmentService:
             v_meta = VoiceMetadata(
                 user_id=user_id,
                 enrollment_session_id=session_id,
-                sample_count=sess.samples_required,
+                sample_count=sess.samples_accepted,
                 avg_snr_db=avg_snr,
                 min_snr_db=float(np.min(snr_vals)),
                 max_snr_db=float(np.max(snr_vals)),

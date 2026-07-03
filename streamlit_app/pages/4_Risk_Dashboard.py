@@ -1,10 +1,8 @@
 """
 streamlit_app/pages/4_Risk_Dashboard.py
 
-Risk Dashboard page: a visual summary of a user's most recent risk
-evaluation plus distribution/trends across their history, combining
-GET /api/v1/users/{id}, GET /api/v1/verification-history/{id}, and
-GET /api/v1/risk-history/{id}.
+Risk Dashboard — live overview of risk evaluations for the current user.
+User is taken from session state; no raw UUID input shown.
 """
 
 import sys
@@ -20,28 +18,33 @@ import streamlit as st
 import api_client
 from config import LAYER1_FRAUD_THRESHOLD, SIMILARITY_THRESHOLD
 
-st.set_page_config(page_title="PhaseGuard - Risk Dashboard", page_icon="📊", layout="wide")
-
+st.set_page_config(page_title="PhaseGuard – Risk Dashboard", page_icon="📊", layout="wide")
 st.title("📊 Risk Dashboard")
 st.caption("Live overview of Layer 2 risk evaluations for an enrolled user")
 
-default_user_id = st.session_state.get("enroll_user_id", "")
-user_id = st.text_input("User ID (UUID)", value=default_user_id, key="dashboard_user_id")
+# ── User resolution ──────────────────────────────────────────────────
+user = st.session_state.get("current_user")
 
-if not user_id:
-    st.info("Enter a User ID above to view their risk dashboard.")
+if not user:
+    st.warning(
+        "No active user in this session. "
+        "Please go to the **Enrollment** page and create or look up a user first."
+    )
     st.stop()
 
-ok_user, user_payload = api_client.get_user(user_id)
-if not ok_user:
-    st.error(f"Could not find user: {user_payload}")
-    st.stop()
+user_id = user["id"]
 
+# User header — name + email only
+ok_u, u_detail = api_client.get_user(user_id)
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Name", user_payload["name"])
-col2.metric("Email", user_payload["email"])
-col3.metric("Enrolled?", "Yes" if user_payload["is_enrolled"] else "No")
-col4.metric("Recordings on file", user_payload.get("recording_count", 0))
+col1.metric("Name", user["name"])
+col2.metric("Email", user["email"])
+if ok_u:
+    col3.metric("Enrolled?", "Yes ✅" if u_detail.get("is_enrolled") else "No ❌")
+    col4.metric("Recordings on file", u_detail.get("recording_count", 0))
+else:
+    col3.metric("Enrolled?", "—")
+    col4.metric("Recordings on file", "—")
 
 st.divider()
 
@@ -58,9 +61,7 @@ risk_df = risk_df.sort_values("created_at")
 
 latest = risk_df.iloc[-1]
 
-# ----------------------------------------------------------------------
-# Latest risk snapshot
-# ----------------------------------------------------------------------
+# ══════════════════════════════════════════════════════════════════════
 st.subheader("Latest evaluation")
 
 snap_col1, snap_col2 = st.columns(2)
@@ -87,7 +88,7 @@ with snap_col1:
         )
     )
     fig_gauge.update_layout(height=300, margin=dict(t=50, b=10))
-    st.plotly_chart(fig_gauge, width='stretch')
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
 with snap_col2:
     level_counts = risk_df["risk_level"].value_counts().reset_index()
@@ -102,13 +103,10 @@ with snap_col2:
         color_discrete_map={"CLEAN": "#4caf50", "FRAUD_ALERT": "#f44336"},
     )
     fig_pie.update_layout(height=300, margin=dict(t=50, b=10))
-    st.plotly_chart(fig_pie, width='stretch')
+    st.plotly_chart(fig_pie, use_container_width=True)
 
 st.divider()
 
-# ----------------------------------------------------------------------
-# Trend over time
-# ----------------------------------------------------------------------
 st.subheader("Risk score trend")
 
 fig_trend = px.line(
@@ -124,11 +122,8 @@ fig_trend.add_hline(
     line_color="orange",
     annotation_text="Mid-risk reference (50%)",
 )
-st.plotly_chart(fig_trend, width='stretch')
+st.plotly_chart(fig_trend, use_container_width=True)
 
-# ----------------------------------------------------------------------
-# Verification similarity trend (if available)
-# ----------------------------------------------------------------------
 if ok_ver and ver_payload:
     st.subheader("Speaker similarity trend (Layer 2)")
 
@@ -149,7 +144,7 @@ if ok_ver and ver_payload:
         line_color="red",
         annotation_text=f"Verification threshold ({SIMILARITY_THRESHOLD:.2f})",
     )
-    st.plotly_chart(fig_sim, width='stretch')
+    st.plotly_chart(fig_sim, use_container_width=True)
 
 st.divider()
 st.caption(

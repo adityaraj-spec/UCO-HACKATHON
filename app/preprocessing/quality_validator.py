@@ -75,7 +75,7 @@ class AudioQualityValidator:
         max_duration: float = 10.0,
         min_snr_db: float = 10.0,
         enrollment_min_snr_db: float = 20.0,
-        min_voice_ratio: float = 0.4,
+        min_voice_ratio: float = 0.2,
     ) -> None:
         self.sample_rate = sample_rate
         self.min_duration = min_duration

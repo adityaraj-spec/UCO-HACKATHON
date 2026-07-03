@@ -69,14 +69,13 @@ class AuditVaultManager:
         )
         current_hash = hashlib.sha256(components.encode()).hexdigest()
 
-        # 3. Write record
         log_entry = AuditLog(
             event_type=str(event_type),
             user_id=user_id,
             actor=actor,
             ip_address=ip_address,
             details=details,
-            payload_hash=payload_hash,
+            payload=payload_data,
             hash_signature=current_hash,
             previous_hash=prev_hash,
             created_at=now,

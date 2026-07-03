@@ -43,16 +43,19 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """
     FastAPI dependency that yields a database session.
 
-    Ensures the session is properly closed after the request finishes,
-    and that any uncommitted changes are rolled back if an exception
-    propagates out of the request handler.
+    Only rolls back if an exception is raised and the transaction was not
+    already committed by the route handler. Prevents middleware exceptions
+    (e.g., SlowAPI rate-limit tracking) from rolling back committed data.
     """
     async with AsyncSessionLocal() as session:
         try:
             yield session
         except Exception:
-            await session.rollback()
-            log.exception("Database session rolled back due to an exception")
+            # Only rollback if nothing has been committed yet
+            if session.in_transaction():
+                await session.rollback()
+            log.exception("Database session error")
             raise
         finally:
             await session.close()
+

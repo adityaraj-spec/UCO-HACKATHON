@@ -76,14 +76,13 @@ async def test_enroll_raises_insufficient_recordings_when_too_few_processed():
     user_repo_mock.get_by_id.return_value = fake_user
 
     ecapa_mock = MagicMock()
-    # Simulate all files failing → processed_count = 0
-    ecapa_mock.enroll_user.return_value = (
-        np.zeros(192, dtype=np.float32), 0
-    )
+    # Simulate extraction failure (e.g. returns or raises) by mocking process_file to fail
+    # or ecapa extract_embedding to fail/return None
+    ecapa_mock.extract_embedding.side_effect = RuntimeError("Extraction failed")
 
     with (
         patch.object(service, "user_repo", user_repo_mock),
-        patch.object(service, "ecapa_service", ecapa_mock),
+        patch.object(service, "ecapa", ecapa_mock),
         patch(
             "app.services.enrollment_service.save_upload_to_temp",
             new_callable=AsyncMock,
@@ -102,7 +101,6 @@ async def test_enroll_raises_insufficient_recordings_when_too_few_processed():
 async def test_enroll_returns_enrollment_response_on_success():
     user_id = uuid.uuid4()
     fake_user = _make_fake_user(user_id)
-    fake_vp = _make_fake_voiceprint(user_id)
 
     session = AsyncMock()
     service = EnrollmentService(session=session)
@@ -110,24 +108,39 @@ async def test_enroll_returns_enrollment_response_on_success():
     user_repo_mock = AsyncMock()
     user_repo_mock.get_by_id.return_value = fake_user
 
-    voiceprint_repo_mock = AsyncMock()
-    voiceprint_repo_mock.upsert.return_value = fake_vp
+    anchor_repo_mock = AsyncMock()
+    threshold_repo_mock = AsyncMock()
+    threshold_repo_mock.get_or_create.return_value = MagicMock()
 
     ecapa_mock = MagicMock()
-    ecapa_mock.enroll_user.return_value = (
-        np.random.rand(192).astype(np.float32), 5
-    )
+    ecapa_mock.extract_embedding.return_value = np.random.rand(192).astype(np.float32)
+
+    vault_mock = MagicMock()
+    vault_mock.generate_template.return_value = (b"enc_blob", b"nonce", "val_hash", "key_used")
+    vault_mock.decrypt_template.return_value = np.zeros(192, dtype=np.float32)
+
+    audio_pipeline_mock = MagicMock()
+    proc_result = MagicMock()
+    proc_result.accepted = True
+    proc_result.waveform = np.zeros(16000, dtype=np.float32)
+    proc_result.sample_rate = 16000
+    audio_pipeline_mock.process_file.return_value = proc_result
 
     with (
         patch.object(service, "user_repo", user_repo_mock),
-        patch.object(service, "voiceprint_repo", voiceprint_repo_mock),
-        patch.object(service, "ecapa_service", ecapa_mock),
+        patch.object(service, "anchor_repo", anchor_repo_mock),
+        patch.object(service, "threshold_repo", threshold_repo_mock),
+        patch.object(service, "vault", vault_mock),
+        patch.object(service, "ecapa", ecapa_mock),
+        patch.object(service, "audio_pipeline", audio_pipeline_mock),
         patch(
             "app.services.enrollment_service.save_upload_to_temp",
             new_callable=AsyncMock,
             return_value="/tmp/fake.wav",
         ),
         patch("app.services.enrollment_service.cleanup_temp_file"),
+        patch("soundfile.write"),
+        patch("app.search.faiss_index.get_faiss_manager", return_value=MagicMock()),
     ):
         response = await service.enroll(
             user_id=user_id,
@@ -153,17 +166,26 @@ async def test_enroll_rolls_back_and_reraises_on_unexpected_error():
     user_repo_mock.get_by_id.return_value = fake_user
 
     ecapa_mock = MagicMock()
-    ecapa_mock.enroll_user.side_effect = RuntimeError("GPU out of memory")
+    ecapa_mock.extract_embedding.side_effect = RuntimeError("GPU out of memory")
+
+    audio_pipeline_mock2 = MagicMock()
+    proc_result2 = MagicMock()
+    proc_result2.accepted = True
+    proc_result2.waveform = np.zeros(16000, dtype=np.float32)
+    proc_result2.sample_rate = 16000
+    audio_pipeline_mock2.process_file.return_value = proc_result2
 
     with (
         patch.object(service, "user_repo", user_repo_mock),
-        patch.object(service, "ecapa_service", ecapa_mock),
+        patch.object(service, "ecapa", ecapa_mock),
+        patch.object(service, "audio_pipeline", audio_pipeline_mock2),
         patch(
             "app.services.enrollment_service.save_upload_to_temp",
             new_callable=AsyncMock,
             return_value="/tmp/fake.wav",
         ),
         patch("app.services.enrollment_service.cleanup_temp_file"),
+        patch("soundfile.write"),
     ):
         with pytest.raises(RuntimeError, match="GPU out of memory"):
             await service.enroll(

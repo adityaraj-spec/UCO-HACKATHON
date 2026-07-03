@@ -1,9 +1,8 @@
 """
 streamlit_app/pages/3_History.py
 
-History page: review past verification attempts and risk evaluations for a
-given user via GET /api/v1/verification-history/{id} and
-GET /api/v1/risk-history/{id}.
+History page — verification and risk history for the current user.
+User is taken from session state; no raw UUID input shown.
 """
 
 import sys
@@ -16,32 +15,37 @@ import streamlit as st
 
 import api_client
 
-st.set_page_config(page_title="PhaseGuard - History", page_icon="📜", layout="wide")
-
+st.set_page_config(page_title="PhaseGuard – History", page_icon="📜", layout="wide")
 st.title("📜 Verification & Risk History")
-st.caption("Review past verification attempts and risk evaluations for a user")
+st.caption("Review past verification attempts and risk evaluations")
 
-default_user_id = st.session_state.get("enroll_user_id", "")
-user_id = st.text_input("User ID (UUID)", value=default_user_id, key="history_user_id")
+# ── User resolution ──────────────────────────────────────────────────
+user = st.session_state.get("current_user")
 
-limit = st.slider("Number of records to show", min_value=5, max_value=200, value=25)
-
-if not user_id:
-    st.info("Enter a User ID above to view their history.")
+if not user:
+    st.warning(
+        "No active user in this session. "
+        "Please go to the **Enrollment** page and create or look up a user first."
+    )
     st.stop()
 
-ok_user, user_payload = api_client.get_user(user_id)
-if ok_user:
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Name", user_payload["name"])
-    col2.metric("Email", user_payload["email"])
-    col3.metric("Enrolled?", "Yes" if user_payload["is_enrolled"] else "No")
+# User header — name + email only, no UUID
+col1, col2, col3 = st.columns(3)
+col1.metric("Name", user["name"])
+col2.metric("Email", user["email"])
+
+ok_u, u_detail = api_client.get_user(user["id"])
+if ok_u:
+    col3.metric("Enrolled?", "Yes ✅" if u_detail.get("is_enrolled") else "No ❌")
 else:
-    st.error(f"Could not find user: {user_payload}")
-    st.stop()
+    col3.metric("Enrolled?", "—")
 
 st.divider()
 
+limit = st.slider("Number of records to show", min_value=5, max_value=200, value=25)
+user_id = user["id"]
+
+# ══════════════════════════════════════════════════════════════════════
 tab_verification, tab_risk = st.tabs(["🔐 Verification History", "⚠️ Risk History"])
 
 with tab_verification:
@@ -57,14 +61,11 @@ with tab_verification:
 
         st.dataframe(
             df[["created_at", "similarity_score", "decision"]],
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
         )
 
-        st.line_chart(
-            df.set_index("created_at")["similarity_score"],
-            height=250,
-        )
+        st.line_chart(df.set_index("created_at")["similarity_score"], height=250)
 
 with tab_risk:
     ok, payload = api_client.get_risk_history(user_id, limit=limit)
@@ -79,17 +80,14 @@ with tab_risk:
 
         st.dataframe(
             df[["created_at", "risk_score", "risk_level"]],
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
         )
 
-        st.line_chart(
-            df.set_index("created_at")["risk_score"],
-            height=250,
-        )
+        st.line_chart(df.set_index("created_at")["risk_score"], height=250)
 
         fraud_count = (df["risk_level"] == "FRAUD_ALERT").sum()
         clean_count = (df["risk_level"] == "CLEAN").sum()
-        col1, col2 = st.columns(2)
-        col1.metric("CLEAN events", int(clean_count))
-        col2.metric("FRAUD_ALERT events", int(fraud_count))
+        c1, c2 = st.columns(2)
+        c1.metric("CLEAN events", int(clean_count))
+        c2.metric("FRAUD_ALERT events", int(fraud_count))

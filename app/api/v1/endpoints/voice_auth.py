@@ -136,7 +136,7 @@ async def initiate_enrollment_session(
         return {
             "success": True,
             "session_id": str(sess.id),
-            "samples_submitted": sess.samples_submitted,
+            "samples_submitted": sess.samples_received,
             "samples_required": sess.samples_required,
             "status": sess.status,
         }

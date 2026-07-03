@@ -13,9 +13,10 @@ This satisfies:
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import DateTime, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -43,39 +44,42 @@ class AuditLog(Base):
 
     # Event classification
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    # Sub-type for filtering (e.g. "MOBILE_APP", "IVR")
-    event_source: Mapped[str] = mapped_column(String(64), nullable=True)
 
     # Actor (who triggered the event)
-    actor_id: Mapped[str] = mapped_column(String(128), nullable=True)
-    actor_role: Mapped[str] = mapped_column(String(32), nullable=True)
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Network context
-    ip_address: Mapped[str] = mapped_column(String(64), nullable=True)
-    device_fingerprint: Mapped[str] = mapped_column(String(256), nullable=True)
+    ip_address: Mapped[str] = mapped_column(String(45), nullable=False)
 
-    # Payload (JSON-serialized event data — no raw biometric data)
-    event_payload: Mapped[str] = mapped_column(Text, nullable=True)
-    # SHA-256 of event_payload (integrity check)
-    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Details
+    details: Mapped[str] = mapped_column(String(512), nullable=False)
 
-    # Chain integrity — SHA-256 of the previous audit entry
-    prev_entry_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    prev_hash: Mapped[str] = mapped_column(String(64), nullable=True)
+    # SHA-256 signature & previous entry link
+    hash_signature: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    # Status / outcome
-    outcome: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="SUCCESS"
-    )  # SUCCESS | FAILURE | WARNING
+    # Payload (stored as JSONB)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
     )
 
+    def __init__(self, **kwargs: Any) -> None:
+        # Safely capture payload_hash if passed, mapping it or ignoring it
+        kwargs.pop("payload_hash", None)
+        super().__init__(**kwargs)
+
+    @property
+    def payload_hash(self) -> str:
+        import json
+        import hashlib
+        payload_data = self.payload or {}
+        payload_str = json.dumps(payload_data, sort_keys=True)
+        return hashlib.sha256(payload_str.encode()).hexdigest()
+
     def __repr__(self) -> str:
         return (
             f"<AuditLog id={self.id} event={self.event_type} "
-            f"user={self.user_id} outcome={self.outcome}>"
+            f"user={self.user_id} actor={self.actor}>"
         )

@@ -77,15 +77,26 @@ async def get_user(
             detail=UserNotFoundError(str(user_id)).message,
         )
 
+    # Check for modern AnchorEmbedding in addition to legacy Voiceprint
+    from app.repositories.layer2.anchor_embedding_repo import AnchorEmbeddingRepository
+    anchor_repo = AnchorEmbeddingRepository(db)
+    anchor = await anchor_repo.get_by_user_id(user_id)
+
     voiceprint = user.voiceprint
+
+    is_enrolled = (voiceprint is not None) or (anchor is not None)
+    recording_count = voiceprint.recording_count if voiceprint else (anchor.recording_count if anchor else 0)
+    embedding_dim = len(voiceprint.embedding) if voiceprint else (anchor.embedding_dim if anchor else None)
+    updated_at = voiceprint.updated_at if voiceprint else (anchor.updated_at if anchor else None)
 
     return UserDetailRead(
         id=user.id,
         name=user.name,
         email=user.email,
         created_at=user.created_at,
-        is_enrolled=voiceprint is not None,
-        recording_count=voiceprint.recording_count if voiceprint else 0,
-        embedding_dimension=len(voiceprint.embedding) if voiceprint else None,
-        voiceprint_updated_at=voiceprint.updated_at if voiceprint else None,
+        is_enrolled=is_enrolled,
+        recording_count=recording_count,
+        embedding_dimension=embedding_dim,
+        voiceprint_updated_at=updated_at,
     )
+

@@ -71,5 +71,5 @@ async def enroll_user_voiceprint(
         log.exception("Unexpected error during enrollment")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An unexpected error occurred during enrollment.",
+            detail=f"Enrollment failed: {exc}",
         ) from exc

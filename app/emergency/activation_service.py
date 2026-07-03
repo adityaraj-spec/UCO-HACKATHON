@@ -93,7 +93,7 @@ class EmergencyActivationService:
 
         # 1. Spawn access event session with 72h max lifetime
         now = datetime.now(timezone.utc)
-        expires = now + timedelta(hours=settings.EMERGENCY_ACCESS_DURATION_HOURS)
+        expires = now + timedelta(hours=settings.EMERGENCY_ACCESS_TTL_HOURS)
 
         import secrets
         access_event = EmergencyAccessEvent(

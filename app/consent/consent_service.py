@@ -3,15 +3,19 @@ app/consent/consent_service.py
 
 DPDP Act 2023 Compliant Consent Management Service.
 
-Provides flow for grant, verification, renewal, and withdrawal of consent:
-  - Consents are bound to a specific user_id and purpose ("biometric_voice_auth")
-  - Explicit consent check is the gatekeeper for all enrollment activities
-  - Withdrawal of consent triggers automated deletion scheduler
+Fixed to match the actual Consent / ConsentHistory SQLAlchemy models:
+  - Consent columns: status, consent_token_jti, purpose, legal_basis,
+    explicit_opt_in, right_to_withdraw_acknowledged, data_retention_acknowledged,
+    ip_address, user_agent, channel, granted_at, withdrawn_at, expires_at,
+    withdrawal_reason, created_at, updated_at
+  - ConsentHistory columns: consent_id, user_id, event_type, previous_status,
+    new_status, actor, ip_address, reason
 """
 
 from __future__ import annotations
 
 import logging
+import hashlib
 import secrets
 import time
 import uuid
@@ -43,12 +47,11 @@ class ConsentService:
         Generate a signed JWT receipt token for a granted consent.
 
         Returns:
-            Tuple of (consent_token: str, signature_hash: str)
+            Tuple of (consent_token: str, jti_hash: str)
         """
         jti = secrets.token_hex(16)
         now = int(time.time())
-        # DPDP consent defaults to 1 year validity or user withdrawal
-        exp = now + (365 * 24 * 3600)  
+        exp = now + (365 * 24 * 3600)  # 1-year validity
 
         payload = {
             "iss": "phaseguard-l2-consent",
@@ -63,10 +66,10 @@ class ConsentService:
         }
 
         token = jwt.encode(payload, self.secret, algorithm="HS256")
-        import hashlib
-        signature = hashlib.sha256(token.encode()).hexdigest()
+        # JTI stored in DB is the SHA-256 of the full token for tamper detection
+        jti_hash = hashlib.sha256(token.encode()).hexdigest()
 
-        return token, signature
+        return token, jti_hash
 
     async def record_consent_grant(
         self,
@@ -77,65 +80,89 @@ class ConsentService:
         consent_type: str = "EXPLICIT_OPT_IN",
     ) -> Consent:
         """
-        Save consent records to the relational database and create history audit logging.
+        Save consent record to the DB and create a history audit entry.
+        Returns the Consent ORM object (with .consent_token set as a transient attr).
         """
-        token, token_sig = self.generate_consent_token(user_id, consent_type, ip_address, user_agent)
-        import hashlib, jwt as _jwt
-        jti = hashlib.sha256(token.encode()).hexdigest()
-
-        # 1. Create or renew active Consent row using real model columns
         from datetime import datetime, timezone, timedelta
-        now = datetime.now(timezone.utc)
-        consent = Consent(
-            user_id=user_id,
-            status="ACTIVE",
-            consent_token_jti=jti,
-            legal_basis="EXPLICIT_CONSENT",
-            purpose="Voice biometric authentication for banking transaction security",
-            explicit_opt_in=True,
-            right_to_withdraw_acknowledged=True,
-            data_retention_acknowledged=True,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            channel="MOBILE_APP",
-            granted_at=now,
-            expires_at=now + timedelta(seconds=settings.CONSENT_TOKEN_TTL_SECONDS),
-        )
-        # Expose is_active and consent_token as properties for backward compat
-        consent.is_active = True
-        consent.consent_token = token
-        db.add(consent)
+        from sqlalchemy import select
 
-        # Flush to get consent ID
+        token, jti_hash = self.generate_consent_token(user_id, consent_type, ip_address, user_agent)
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=settings.CONSENT_TOKEN_TTL_SECONDS)
+
+        # Check if a consent row already exists for this user (unique constraint)
+        stmt = select(Consent).where(Consent.user_id == user_id)
+        result = await db.execute(stmt)
+        existing = result.scalars().first()
+
+        if existing:
+            # Renew / re-activate existing row
+            existing.status = "ACTIVE"
+            existing.consent_token_jti = jti_hash
+            existing.explicit_opt_in = True
+            existing.right_to_withdraw_acknowledged = True
+            existing.data_retention_acknowledged = True
+            existing.ip_address = ip_address
+            existing.user_agent = user_agent
+            existing.channel = "MOBILE_APP"
+            existing.granted_at = now
+            existing.expires_at = expires_at
+            existing.withdrawn_at = None
+            existing.withdrawal_reason = None
+            consent = existing
+        else:
+            consent = Consent(
+                user_id=user_id,
+                status="ACTIVE",
+                consent_token_jti=jti_hash,
+                legal_basis="EXPLICIT_CONSENT",
+                purpose="Voice biometric authentication for banking transaction security",
+                explicit_opt_in=True,
+                right_to_withdraw_acknowledged=True,
+                data_retention_acknowledged=True,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                channel="MOBILE_APP",
+                granted_at=now,
+                expires_at=expires_at,
+            )
+            db.add(consent)
+
         await db.flush()
 
-        # 2. Record history trail
+        # History audit entry
         history = ConsentHistory(
             consent_id=consent.id,
             user_id=user_id,
             event_type="CONSENT_GRANTED",
-            previous_status="NONE",
+            previous_status="NONE" if not existing else "WITHDRAWN",
             new_status="ACTIVE",
+            actor=str(user_id),
             ip_address=ip_address,
             reason=f"Explicit opt-in via {consent_type}",
         )
         db.add(history)
 
         logger.info(
-            "Consent GRANTED: user=%s, type=%s, jti=%s",
-            user_id, consent_type, jti[:8]
+            "Consent GRANTED: user=%s, type=%s, jti_hash=%s",
+            user_id, consent_type, jti_hash[:8]
         )
+
+        # Attach raw token as transient attribute for the API response
+        consent.consent_token = token
         return consent
 
     async def verify_active_consent(self, db: AsyncSession, user_id: uuid.UUID) -> bool:
         """
-        Query DB to verify if user has active, unwithdrawn consent.
+        Query DB to verify if user has an active, unwithdrawn consent.
+        Uses the `status` column (the real DB column, not the non-existent is_active).
         """
         from sqlalchemy import select
+        from datetime import datetime, timezone
+
         stmt = select(Consent).where(
             Consent.user_id == user_id,
-            Consent.is_active == True,
-            Consent.consent_granted == True
+            Consent.status == "ACTIVE",
         )
         result = await db.execute(stmt)
         consent = result.scalars().first()
@@ -144,14 +171,13 @@ class ConsentService:
             logger.warning("No active biometric consent found for user %s", user_id)
             return False
 
-        # Validate token signature
-        try:
-            jwt.decode(consent.consent_token, self.secret, algorithms=["HS256"])
-            return True
-        except jwt.PyJWTError as e:
-            logger.error("Active consent token signature validation failed: %s", e)
-            # Token corrupted
+        # Check expiry
+        now = datetime.now(timezone.utc)
+        if consent.expires_at and consent.expires_at < now:
+            logger.warning("Consent expired for user %s", user_id)
             return False
+
+        return True
 
     async def record_consent_withdrawal(
         self,
@@ -160,11 +186,14 @@ class ConsentService:
         ip_address: str,
         user_agent: str,
     ) -> bool:
-        """
-        Mark consent as revoked and trigger deletion schedule.
-        """
+        """Mark consent as WITHDRAWN and record history trail."""
         from sqlalchemy import select
-        stmt = select(Consent).where(Consent.user_id == user_id, Consent.is_active == True)
+        from datetime import datetime, timezone
+
+        stmt = select(Consent).where(
+            Consent.user_id == user_id,
+            Consent.status == "ACTIVE",
+        )
         res = await db.execute(stmt)
         consents = res.scalars().all()
 
@@ -172,20 +201,22 @@ class ConsentService:
             logger.warning("No active consent to revoke for user %s", user_id)
             return False
 
+        now = datetime.now(timezone.utc)
         for c in consents:
-            c.consent_granted = False
-            c.is_active = False
+            prev_status = c.status
+            c.status = "WITHDRAWN"
+            c.withdrawn_at = now
+            c.withdrawal_reason = "User initiated withdrawal"
 
-            # Add to history
             history = ConsentHistory(
                 consent_id=c.id,
                 user_id=user_id,
-                action="WITHDRAWN",
-                consent_type=c.consent_type,
-                purpose="biometric_voice_auth",
+                event_type="CONSENT_WITHDRAWN",
+                previous_status=prev_status,
+                new_status="WITHDRAWN",
+                actor=str(user_id),
                 ip_address=ip_address,
-                user_agent=user_agent,
-                details="Consent withdrawn by user. Automated template purge sequence queued.",
+                reason="Consent withdrawn by user. Automated template purge sequence queued.",
             )
             db.add(history)
 

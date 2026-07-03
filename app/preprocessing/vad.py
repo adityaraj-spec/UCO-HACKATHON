@@ -29,7 +29,7 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Minimum fraction of voiced frames required
-MIN_VOICE_RATIO = 0.3
+MIN_VOICE_RATIO = 0.2
 # Frame duration for analysis (milliseconds)
 FRAME_DURATION_MS = 30
 # Energy percentile for noise floor estimation

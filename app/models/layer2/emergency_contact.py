@@ -37,31 +37,24 @@ class EmergencyContact(Base):
         UUID(as_uuid=True), nullable=False, index=True
     )
 
-    # Contact details (encrypted in production)
+    # Contact details (PII GCM encrypted)
     contact_name: Mapped[str] = mapped_column(String(256), nullable=False)
-    contact_phone_encrypted: Mapped[str] = mapped_column(String(512), nullable=False)
-    contact_phone_hash: Mapped[str] = mapped_column(String(64), nullable=False)  # For lookup
-    relationship_type: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )  # SPOUSE | PARENT | CHILD | SIBLING | GUARDIAN | OTHER
+    encrypted_phone: Mapped[bytes] = mapped_column(nullable=False)
+    phone_nonce: Mapped[bytes] = mapped_column(nullable=False)
+    encrypted_email: Mapped[bytes] = mapped_column(nullable=False)
+    email_nonce: Mapped[bytes] = mapped_column(nullable=False)
+    key_id: Mapped[str] = mapped_column(String(128), nullable=False, default="phaseguard-master-key-v1")
 
-    # Access permissions (pre-authorized by account holder)
+    # Access permissions
     access_scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="READ_ONLY"
     )  # READ_ONLY | LIMITED_TRANSACTION | FULL_TRANSACTION
 
-    max_transaction_limit_inr: Mapped[int] = mapped_column(
-        nullable=False, default=10000
-    )  # INR limit for LIMITED_TRANSACTION
-
     # Verification status
     is_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    verification_method: Mapped[str] = mapped_column(String(32), nullable=True)  # OTP | BRANCH
-    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Lifecycle
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    activation_window_days: Mapped[int] = mapped_column(nullable=False, default=7)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

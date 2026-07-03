@@ -224,7 +224,7 @@ class AuthService:
             sf.write(denoised_temp, proc.waveform, proc.sample_rate)
 
             try:
-                emb = self.ecapa.get_embedding(denoised_temp)
+                emb = self.ecapa.extract_embedding(denoised_temp)
             finally:
                 cleanup_temp_file(denoised_temp)
 

@@ -257,8 +257,12 @@ async def test_emergency_contact_registration():
 
 @pytest.mark.asyncio
 async def test_emergency_activation():
-    # Setup complete mocks for activation lifecycle
-    db = AsyncMock()
+    db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=mock_result)
+    db.flush = AsyncMock()
+    db.add = MagicMock()
     service = EmergencyActivationService()
     from app.models.layer2.emergency_contact import EmergencyContact
 
@@ -266,9 +270,11 @@ async def test_emergency_activation():
         id=uuid.uuid4(),
         user_id=uuid.uuid4(),
         contact_name="Bob",
-        contact_phone_encrypted="enc_phone",
-        contact_phone_hash="abc123hash",
-        relationship_type="SPOUSE",
+        encrypted_phone=b"enc_phone",
+        phone_nonce=b"123456789012",
+        encrypted_email=b"enc_email",
+        email_nonce=b"123456789012",
+        key_id="phaseguard-master-key-v1",
         access_scope="READ_ONLY",
         is_verified=True,
         is_active=True,
@@ -282,7 +288,7 @@ async def test_emergency_activation():
     assert otp_ref is not None
 
     # Mock Redis lookup check
-    service.session_cache.verify_otp = AsyncMock(return_value=True)
+    service.otp.verify_otp = AsyncMock(return_value=True)
 
     # Complete OTP verification to trigger override session
     event = await service.complete_activation(db, contact, "123456", "10.0.0.2")
