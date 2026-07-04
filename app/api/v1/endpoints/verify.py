@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.database.session import get_db
+from app.middleware.jwt_auth import get_current_user_id
 from app.schemas.verification import VerificationResult
 from app.services.verification_service import VerificationService
 from app.utils.exceptions import (
@@ -41,7 +42,6 @@ router = APIRouter()
     ),
 )
 async def verify_speaker(
-    user_id: uuid.UUID = Form(..., description="UUID of the claimed user/account"),
     file: UploadFile = File(..., description="Live audio recording to verify"),
     layer1_score: float = Form(
         0.0,
@@ -52,6 +52,7 @@ async def verify_speaker(
             "Defaults to 0.0 if Layer 1 has not been run."
         ),
     ),
+    user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> VerificationResult:
     service = VerificationService(session=db)

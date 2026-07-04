@@ -1,0 +1,116 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.5, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\LENOVO\AppData\Local\Programs\Python\Python314\python.exe
+cachedir: .pytest_cache
+rootdir: C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard
+configfile: pytest.ini
+plugins: anyio-4.13.0, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 67 items
+
+tests/layer2/test_layer2_components.py::test_audio_pipeline_snr_estimation PASSED [  1%]
+tests/layer2/test_layer2_components.py::test_audio_normalization PASSED  [  2%]
+tests/layer2/test_layer2_components.py::test_biohash_projection PASSED   [  4%]
+tests/layer2/test_layer2_components.py::test_hsm_key_derivation PASSED   [  5%]
+tests/layer2/test_layer2_components.py::test_template_vault_encryption PASSED [  7%]
+tests/layer2/test_layer2_components.py::test_consent_recording PASSED    [  8%]
+tests/layer2/test_layer2_components.py::test_biometric_purge_scheduler 
+-------------------------------- live log call --------------------------------
+WARNING  app.cache.redis_client:redis_client.py:53 Redis connection failed (Error 11001 connecting to redis:6379. getaddrinfo failed.). Falling back to in-memory cache.
+PASSED                                                                   [ 10%]
+tests/layer2/test_layer2_components.py::test_adaptive_threshold_calibration PASSED [ 11%]
+tests/layer2/test_layer2_components.py::test_confidence_bands_scoring PASSED [ 13%]
+tests/layer2/test_layer2_components.py::test_emergency_contact_registration PASSED [ 14%]
+tests/layer2/test_layer2_components.py::test_emergency_activation PASSED [ 16%]
+tests/layer2/test_layer2_components.py::test_fraud_evaluation_and_alerts PASSED [ 17%]
+tests/layer2/test_refactor_hardening.py::test_ivr_noisy_channel_offset PASSED [ 19%]
+tests/layer2/test_refactor_hardening.py::test_mpin_login_credential_enumeration_prevention PASSED [ 20%]
+tests/layer2/test_refactor_hardening.py::test_voice_replay_detection_unit PASSED [ 22%]
+tests/layer2/test_refactor_hardening.py::test_emergency_activation_cooldown_restriction PASSED [ 23%]
+tests/layer2/test_refactor_hardening.py::test_emergency_registration_mpin_step_up PASSED [ 25%]
+tests/layer2/test_refactor_hardening.py::test_legal_guardian_dual_approval_distinct_approvers PASSED [ 26%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_wav_is_accepted PASSED [ 28%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_flac_is_accepted PASSED [ 29%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_mp3_is_accepted PASSED [ 31%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_ogg_is_accepted PASSED [ 32%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_case_insensitive PASSED [ 34%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_pdf_is_rejected PASSED [ 35%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_exe_is_rejected PASSED [ 37%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_none_filename_is_rejected PASSED [ 38%]
+tests/test_audio_utils.py::TestValidateAudioExtension::test_empty_string_filename_is_rejected PASSED [ 40%]
+tests/test_audio_utils.py::TestLoadWaveform::test_loads_valid_wav PASSED [ 41%]
+tests/test_audio_utils.py::TestLoadWaveform::test_resamples_to_target_sr PASSED [ 43%]
+tests/test_audio_utils.py::TestLoadWaveform::test_peak_normalizes_output PASSED [ 44%]
+tests/test_audio_utils.py::TestLoadWaveform::test_invalid_path_raises PASSED [ 46%]
+tests/test_audio_utils.py::TestLoadWaveform::test_empty_file_raises PASSED [ 47%]
+tests/test_audio_utils.py::TestCleanupTempFile::test_removes_existing_file PASSED [ 49%]
+tests/test_audio_utils.py::TestCleanupTempFile::test_does_not_raise_for_nonexistent_path PASSED [ 50%]
+tests/test_audio_utils.py::TestCleanupTempFile::test_does_not_raise_for_none PASSED [ 52%]
+tests/test_banking_auth.py::test_mpin_hash_utility PASSED                [ 53%]
+tests/test_banking_auth.py::test_jwt_contains_banking_claims PASSED      [ 55%]
+tests/test_banking_auth.py::test_mask_phone_last_four_only PASSED        [ 56%]
+tests/test_banking_auth.py::test_login_rejects_replayed_request PASSED   [ 58%]
+tests/test_ecapa_service.py::test_cosine_similarity_identical_vectors_is_one PASSED [ 59%]
+tests/test_ecapa_service.py::test_cosine_similarity_orthogonal_vectors_is_zero PASSED [ 61%]
+tests/test_ecapa_service.py::test_cosine_similarity_opposite_vectors_is_minus_one PASSED [ 62%]
+tests/test_ecapa_service.py::test_cosine_similarity_handles_zero_vector_gracefully PASSED [ 64%]
+tests/test_ecapa_service.py::test_cosine_similarity_is_scale_invariant PASSED [ 65%]
+tests/test_ecapa_service.py::test_cosine_similarity_clamped_to_valid_range PASSED [ 67%]
+tests/test_ecapa_service.py::test_enroll_user_averages_embeddings_correctly PASSED [ 68%]
+tests/test_ecapa_service.py::test_enroll_user_skips_failed_files PASSED  [ 70%]
+tests/test_ecapa_service.py::test_enroll_user_returns_zero_vector_when_all_files_fail PASSED [ 71%]
+tests/test_enrollment_service.py::test_enroll_raises_user_not_found_when_user_missing PASSED [ 73%]
+tests/test_enrollment_service.py::test_enroll_raises_insufficient_recordings_when_too_few_processed 
+-------------------------------- live log call --------------------------------
+WARNING  app.services.enrollment_service:enrollment_service.py:98 Sample 'test.wav' rejected: Failed to load audio from /tmp/fake.wav: Error opening '/tmp/fake.wav': System error.
+PASSED                                                                   [ 74%]
+tests/test_enrollment_service.py::test_enroll_returns_enrollment_response_on_success PASSED [ 76%]
+tests/test_enrollment_service.py::test_enroll_rolls_back_and_reraises_on_unexpected_error PASSED [ 77%]
+tests/test_risk_engine.py::test_layer1_above_threshold_triggers_fraud_alert PASSED [ 79%]
+tests/test_risk_engine.py::test_low_similarity_triggers_fraud_alert PASSED [ 80%]
+tests/test_risk_engine.py::test_clean_when_layer1_low_and_similarity_high PASSED [ 82%]
+tests/test_risk_engine.py::test_layer1_exactly_at_threshold_is_not_fraud_by_layer1_alone PASSED [ 83%]
+tests/test_risk_engine.py::test_similarity_exactly_at_threshold_is_not_fraud_by_similarity_alone PASSED [ 85%]
+tests/test_risk_engine.py::test_both_rules_triggered_still_results_in_fraud_alert PASSED [ 86%]
+tests/test_risk_engine.py::test_risk_score_is_bounded_between_0_and_100 PASSED [ 88%]
+tests/test_risk_engine.py::test_perfect_match_and_zero_ai_probability_yields_zero_risk_score PASSED [ 89%]
+tests/test_risk_engine.py::test_worst_case_yields_max_risk_score PASSED  [ 91%]
+tests/test_verification_service.py::test_verify_raises_user_not_found PASSED [ 92%]
+tests/test_verification_service.py::test_verify_raises_voiceprint_not_found PASSED [ 94%]
+tests/test_verification_service.py::test_verify_returns_verified_when_similarity_above_threshold PASSED [ 95%]
+tests/test_verification_service.py::test_verify_returns_mismatch_when_similarity_below_threshold PASSED [ 97%]
+tests/test_verification_service.py::test_verify_fraud_alert_when_layer1_score_high PASSED [ 98%]
+tests/test_verification_service.py::test_verify_logs_are_persisted_on_success PASSED [100%]
+
+============================== warnings summary ===============================
+tests/layer2/test_layer2_components.py::test_consent_recording
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\consent\consent_service.py:129: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(consent)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/layer2/test_layer2_components.py::test_consent_recording
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\consent\consent_service.py:144: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(history)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/layer2/test_layer2_components.py::test_emergency_contact_registration
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\emergency\contact_service.py:83: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(contact)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_enrollment_service.py::test_enroll_returns_enrollment_response_on_success
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\services\enrollment_service.py:156: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self.db.add(roll_entry)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_enrollment_service.py::test_enroll_returns_enrollment_response_on_success
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\services\enrollment_service.py:163: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self.db.add(ut)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================= 67 passed, 5 warnings in 7.03s ========================

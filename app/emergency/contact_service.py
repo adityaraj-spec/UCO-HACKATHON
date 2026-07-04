@@ -16,7 +16,7 @@ import uuid
 from sqlalchemy import select
 from app.core.config import get_settings
 from app.emergency.access_scope import EmergencyAccessScope
-from app.emergency.otp_interface import get_otp_provider
+from app.emergency.otp_interface import MockOTPProvider, get_otp_provider
 from app.encryption.aes_gcm import AESGCM256, EncryptedData
 from app.encryption.key_manager import get_key_manager
 from app.models.layer2.emergency_contact import EmergencyContact
@@ -53,8 +53,10 @@ class EmergencyContactService:
         res = await db.execute(stmt)
         active_count = len(res.scalars().all())
 
-        if active_count >= 2:
-            raise ValueError("Maximum of 2 active emergency contacts allowed per customer account.")
+        if active_count >= settings.EMERGENCY_MAX_CONTACTS:
+            raise ValueError(
+                f"Maximum of {settings.EMERGENCY_MAX_CONTACTS} active emergency contacts allowed per customer account."
+            )
 
         # 1. Derive user key and encrypt PII data fields
         key_id = settings.HSM_MASTER_KEY_ID

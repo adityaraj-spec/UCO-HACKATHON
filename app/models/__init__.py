@@ -7,13 +7,14 @@ Imports all ORM models so that:
   2. Other modules can import models via `from app.models import User`.
 """
 
-from app.models.user import User
+from app.models.user import KnownDevice, User
 from app.models.voiceprint import Voiceprint
 from app.models.verification_log import VerificationLog
 from app.models.risk_log import RiskLog
 
 __all__ = [
     "User",
+    "KnownDevice",
     "Voiceprint",
     "VerificationLog",
     "RiskLog",

@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     MIN_ENROLLMENT_SAMPLES: int = 5                  # Required samples for enrollment
     MIN_ENROLLMENT_RECORDINGS: int = 3               # Backward compat alias
     ENROLLMENT_SESSION_TTL_SECONDS: int = 600        # 10-minute enrollment session
+    ENROLLMENT_CHANNEL: str = "MOBILE_APP"
     MAX_ROLLING_EMBEDDINGS: int = 10                 # Rolling pool size
     ROLLING_UPDATE_CONSECUTIVE_REQUIRED: int = 3     # Consecutive successes before update
     ROLLING_UPDATE_WINDOW_HOURS: int = 24
@@ -118,6 +119,11 @@ class Settings(BaseSettings):
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 1
     INTERNAL_SERVICE_TOKEN: str = "CHANGE_ME_INTERNAL_SERVICE_TOKEN"
+    MPIN_MAX_AGE_DAYS: int = 180
+    MPIN_LOCKOUT_FAILURES: int = 5
+    MPIN_LOCKOUT_MINUTES: int = 30
+    LOGIN_REPLAY_WINDOW_SECONDS: int = 300
+    KYC_GATE_POLICY: str = "PENDING_LOGIN_ONLY_REJECTED_BLOCKED"
 
     # ------------------------------------------------------------------ #
     # Redis                                                                #
@@ -165,6 +171,8 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ #
     EMERGENCY_ACCESS_TTL_HOURS: int = 72
     EMERGENCY_MAX_CONTACTS: int = 2
+    EMERGENCY_CONTACT_ACTIVATION_DELAY_HOURS: int = 48
+    EMERGENCY_BRANCH_APPROVAL_REQUIRED: bool = True
     EMERGENCY_OTP_PROVIDER: Literal["mock", "sms", "ivr"] = "mock"
 
     # ------------------------------------------------------------------ #

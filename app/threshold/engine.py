@@ -51,6 +51,7 @@ class AdaptiveThresholdEngine:
         illness_active: bool,
         fraud_risk_level: str,  # LOW | MEDIUM | HIGH | CRITICAL
         ip_device_trusted: bool,
+        enrolled_via: str = "MOBILE_APP",
     ) -> float:
         """
         Compute effective similarity threshold for the user.
@@ -61,6 +62,7 @@ class AdaptiveThresholdEngine:
             illness_active: Flag indicating active illness window (sore throat, etc.)
             fraud_risk_level: Fraud engine risk category
             ip_device_trusted: Context authenticity evaluation
+            enrolled_via: Dynamic channel validator (e.g. IVR, MOBILE_APP)
 
         Returns:
             Calculated target threshold (float)
@@ -70,6 +72,12 @@ class AdaptiveThresholdEngine:
         eff = base
 
         reasons = []
+
+        # 0. Adjust baseline if enrolled via a noisy/less-secure channel (e.g. IVR)
+        if enrolled_via == "IVR":
+            ivr_offset = 0.05
+            eff += ivr_offset
+            reasons.append(f"ivr_enrollment_channel_penalty(+{ivr_offset:.2f})")
 
         # 1. Apply consecutive failures relaxation (only if device/IP is trusted)
         # Rejects relaxing threshold for unknown/risky devices to prevent brute-force attacks

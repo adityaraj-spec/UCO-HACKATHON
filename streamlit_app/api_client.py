@@ -37,16 +37,68 @@ def _handle_response(response: requests.Response) -> tuple[bool, Any]:
     return False, str(detail)
 
 
+def _auth_headers(token: str | None = None) -> dict[str, str]:
+    if not token:
+        try:
+            import streamlit as st
+
+            token = st.session_state.get("session_token")
+        except Exception:
+            token = None
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 # ------------------------------------------------------------------ #
-# User Management                                                     #
+# Banking Auth                                                        #
 # ------------------------------------------------------------------ #
 
-def create_user(name: str, email: str) -> tuple[bool, Any]:
-    """POST /api/v1/users"""
+def register_customer(payload: dict[str, Any]) -> tuple[bool, Any]:
+    """POST /api/v1/auth/register"""
     try:
         response = requests.post(
-            f"{API_V1}/users",
-            json={"name": name, "email": email},
+            f"{API_V1}/auth/register",
+            json=payload,
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return False, f"Could not reach API: {exc}"
+    return _handle_response(response)
+
+
+def login(account_number: str, mpin: str, device_fingerprint: str | None = None) -> tuple[bool, Any]:
+    """POST /api/v1/auth/login"""
+    import uuid
+    from datetime import datetime, timezone
+
+    payload = {
+        "account_number": account_number,
+        "mpin": mpin,
+        "request_nonce": str(uuid.uuid4()),
+        "request_timestamp": datetime.now(timezone.utc).isoformat(),
+        "device_fingerprint": device_fingerprint,
+    }
+    try:
+        response = requests.post(f"{API_V1}/auth/login", json=payload, timeout=DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        return False, f"Could not reach API: {exc}"
+    return _handle_response(response)
+
+
+def get_me() -> tuple[bool, Any]:
+    """GET /api/v1/auth/me"""
+    try:
+        response = requests.get(f"{API_V1}/auth/me", headers=_auth_headers(), timeout=DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        return False, f"Could not reach API: {exc}"
+    return _handle_response(response)
+
+
+def change_mpin(old_mpin: str, new_mpin: str) -> tuple[bool, Any]:
+    try:
+        response = requests.post(
+            f"{API_V1}/auth/mpin/change",
+            json={"old_mpin": old_mpin, "new_mpin": new_mpin},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -72,7 +124,8 @@ def grant_consent(user_id: str, consent_type: str = "EXPLICIT_OPT_IN") -> tuple[
     try:
         response = requests.post(
             f"{API_V1}/consent/grant",
-            data={"user_id": user_id, "consent_type": consent_type},
+            data={"consent_type": consent_type},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -80,11 +133,12 @@ def grant_consent(user_id: str, consent_type: str = "EXPLICIT_OPT_IN") -> tuple[
     return _handle_response(response)
 
 
-def get_consent_status(user_id: str) -> tuple[bool, Any]:
+def get_consent_status(user_id: str | None = None) -> tuple[bool, Any]:
     """GET /consent/status/{user_id}"""
     try:
         response = requests.get(
-            f"{API_V1}/consent/status/{user_id}",
+            f"{API_V1}/consent/status",
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -96,12 +150,12 @@ def get_consent_status(user_id: str) -> tuple[bool, Any]:
 # Session-based Enrollment (new backend flow)                         #
 # ------------------------------------------------------------------ #
 
-def create_enrollment_session(user_id: str) -> tuple[bool, Any]:
+def create_enrollment_session(user_id: str | None = None) -> tuple[bool, Any]:
     """POST /voice/enroll/session — create a new 5-sample enrollment session."""
     try:
         response = requests.post(
             f"{API_V1}/voice/enroll/session",
-            data={"user_id": user_id},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -110,7 +164,7 @@ def create_enrollment_session(user_id: str) -> tuple[bool, Any]:
 
 
 def submit_enrollment_sample(
-    user_id: str,
+    user_id: str | None,
     session_id: str,
     filename: str,
     file_bytes: bytes,
@@ -120,8 +174,9 @@ def submit_enrollment_sample(
     try:
         response = requests.post(
             f"{API_V1}/voice/enroll/sample",
-            data={"user_id": user_id, "session_id": session_id},
+            data={"session_id": session_id},
             files={"audio": (filename, file_bytes, mime_type)},
+            headers=_auth_headers(),
             timeout=ENROLL_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -129,12 +184,13 @@ def submit_enrollment_sample(
     return _handle_response(response)
 
 
-def complete_enrollment(user_id: str, session_id: str) -> tuple[bool, Any]:
+def complete_enrollment(user_id: str | None, session_id: str) -> tuple[bool, Any]:
     """POST /voice/enroll/complete — finalize enrollment session."""
     try:
         response = requests.post(
             f"{API_V1}/voice/enroll/complete",
-            data={"user_id": user_id, "session_id": session_id},
+            data={"session_id": session_id},
+            headers=_auth_headers(),
             timeout=ENROLL_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -146,12 +202,13 @@ def complete_enrollment(user_id: str, session_id: str) -> tuple[bool, Any]:
 # Challenge-Response Verification (new backend flow)                  #
 # ------------------------------------------------------------------ #
 
-def get_challenge(user_id: str, session_id: str) -> tuple[bool, Any]:
+def get_challenge(user_id: str | None, session_id: str) -> tuple[bool, Any]:
     """GET /voice/challenge — get a spoken challenge phrase + JWT token."""
     try:
         response = requests.get(
             f"{API_V1}/voice/challenge",
-            params={"user_id": user_id, "session_id": session_id},
+            params={"session_id": session_id},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -160,7 +217,7 @@ def get_challenge(user_id: str, session_id: str) -> tuple[bool, Any]:
 
 
 def authenticate_voice(
-    user_id: str,
+    user_id: str | None,
     session_id: str,
     challenge_token: str,
     device_fingerprint: str,
@@ -173,12 +230,12 @@ def authenticate_voice(
         response = requests.post(
             f"{API_V1}/voice/authenticate",
             data={
-                "user_id": user_id,
                 "session_id": session_id,
                 "challenge_token": challenge_token,
                 "device_fingerprint": device_fingerprint,
             },
             files={"audio": (filename, file_bytes, mime_type)},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -186,11 +243,33 @@ def authenticate_voice(
     return _handle_response(response)
 
 
+def authenticate_voice_direct(
+    user_id: str | None,
+    device_fingerprint: str,
+    filename: str,
+    file_bytes: bytes,
+    mime_type: str,
+) -> tuple[bool, Any]:
+    """POST /voice/authenticate/direct — verify voice directly against enrolled voiceprint."""
+    try:
+        response = requests.post(
+            f"{API_V1}/voice/authenticate/direct",
+            data={"device_fingerprint": device_fingerprint},
+            files={"audio": (filename, file_bytes, mime_type)},
+            headers=_auth_headers(),
+            timeout=DEFAULT_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        return False, f"Could not reach API: {exc}"
+    return _handle_response(response)
+
+
+
 # ------------------------------------------------------------------ #
 # Legacy fallback (kept for History / Risk pages)                     #
 # ------------------------------------------------------------------ #
 
-def enroll_user(user_id: str, files: list[tuple[str, bytes, str]]) -> tuple[bool, Any]:
+def enroll_user(user_id: str | None, files: list[tuple[str, bytes, str]]) -> tuple[bool, Any]:
     """POST /api/v1/enroll (legacy single-call)"""
     try:
         multipart_files = [
@@ -199,8 +278,8 @@ def enroll_user(user_id: str, files: list[tuple[str, bytes, str]]) -> tuple[bool
         ]
         response = requests.post(
             f"{API_V1}/enroll",
-            data={"user_id": user_id},
             files=multipart_files,
+            headers=_auth_headers(),
             timeout=120,
         )
     except requests.RequestException as exc:
@@ -209,7 +288,7 @@ def enroll_user(user_id: str, files: list[tuple[str, bytes, str]]) -> tuple[bool
 
 
 def verify_user(
-    user_id: str,
+    user_id: str | None,
     filename: str,
     file_bytes: bytes,
     mime_type: str,
@@ -219,8 +298,9 @@ def verify_user(
     try:
         response = requests.post(
             f"{API_V1}/verify",
-            data={"user_id": user_id, "layer1_score": str(layer1_score)},
+            data={"layer1_score": str(layer1_score)},
             files={"file": (filename, file_bytes, mime_type)},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -228,12 +308,13 @@ def verify_user(
     return _handle_response(response)
 
 
-def get_verification_history(user_id: str, limit: int = 50) -> tuple[bool, Any]:
-    """GET /api/v1/verification-history/{id}"""
+def get_verification_history(user_id: str | None = None, limit: int = 50) -> tuple[bool, Any]:
+    """GET /api/v1/verification-history/me"""
     try:
         response = requests.get(
-            f"{API_V1}/verification-history/{user_id}",
+            f"{API_V1}/verification-history/me",
             params={"limit": limit},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:
@@ -241,12 +322,13 @@ def get_verification_history(user_id: str, limit: int = 50) -> tuple[bool, Any]:
     return _handle_response(response)
 
 
-def get_risk_history(user_id: str, limit: int = 50) -> tuple[bool, Any]:
-    """GET /api/v1/risk-history/{id}"""
+def get_risk_history(user_id: str | None = None, limit: int = 50) -> tuple[bool, Any]:
+    """GET /api/v1/risk-history/me"""
     try:
         response = requests.get(
-            f"{API_V1}/risk-history/{user_id}",
+            f"{API_V1}/risk-history/me",
             params={"limit": limit},
+            headers=_auth_headers(),
             timeout=DEFAULT_TIMEOUT,
         )
     except requests.RequestException as exc:

@@ -120,3 +120,42 @@ class EmergencyAccessEvent(Base):
             f"<EmergencyAccessEvent id={self.id} user_id={self.user_id} "
             f"status={self.status} scope={self.access_scope_granted}>"
         )
+
+
+class LegalGuardianRequest(Base):
+    """
+    Tier 4 back-office workflow: manual dual-approval activation request
+    for Court Order / Legal Guardian access.
+    """
+
+    __tablename__ = "legal_guardian_requests"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False, index=True
+    )
+
+    pdf_path: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="PENDING_REVIEW"
+    )  # PENDING_REVIEW | APPROVED | REJECTED
+
+    branch_manager_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    branch_manager_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    compliance_officer_approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    compliance_officer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<LegalGuardianRequest id={self.id} user_id={self.user_id} "
+            f"status={self.status} manager_approved={self.branch_manager_approved} "
+            f"compliance_approved={self.compliance_officer_approved}>"
+        )
+

@@ -37,3 +37,8 @@ class AuditEventType(str, Enum):
 
     # Context Drift
     BIOMETRIC_DRIFT_ALERT = "BIOMETRIC_DRIFT_ALERT"
+
+    # Banking Identity & Safety Hardening
+    NEW_DEVICE_LOGIN = "NEW_DEVICE_LOGIN"
+    REPLAY_DETECTED = "REPLAY_DETECTED"
+    FRAUD_FLAG = "FRAUD_FLAG"

@@ -41,6 +41,7 @@ kafka-python>=3.0.7     # 3.0.7+ has Python 3.14 compatible wheels
 cryptography==42.0.8
 pyjwt[crypto]==2.8.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
 
 # --- Rate limiting ---
 slowapi==0.1.9

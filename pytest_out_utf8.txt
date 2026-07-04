@@ -1,0 +1,69 @@
+============================= test session starts =============================
+platform win32 -- Python 3.14.5, pytest-9.1.1, pluggy-1.6.0
+rootdir: C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard
+configfile: pytest.ini
+plugins: anyio-4.13.0, asyncio-1.4.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collected 12 items
+
+tests/layer2/test_layer2_components.py::test_audio_pipeline_snr_estimation PASSED [  8%]
+tests/layer2/test_layer2_components.py::test_audio_normalization PASSED  [ 16%]
+tests/layer2/test_layer2_components.py::test_biohash_projection PASSED   [ 25%]
+tests/layer2/test_layer2_components.py::test_hsm_key_derivation PASSED   [ 33%]
+tests/layer2/test_layer2_components.py::test_template_vault_encryption PASSED [ 41%]
+tests/layer2/test_layer2_components.py::test_consent_recording FAILED    [ 50%]
+tests/layer2/test_layer2_components.py::test_biometric_purge_scheduler 
+-------------------------------- live log call --------------------------------
+WARNING  app.cache.redis_client:redis_client.py:53 Redis connection failed (Error 11001 connecting to redis:6379. getaddrinfo failed.). Falling back to in-memory cache.
+PASSED                                                                   [ 58%]
+tests/layer2/test_layer2_components.py::test_adaptive_threshold_calibration PASSED [ 66%]
+tests/layer2/test_layer2_components.py::test_confidence_bands_scoring PASSED [ 75%]
+tests/layer2/test_layer2_components.py::test_emergency_contact_registration PASSED [ 83%]
+tests/layer2/test_layer2_components.py::test_emergency_activation PASSED [ 91%]
+tests/layer2/test_layer2_components.py::test_fraud_evaluation_and_alerts PASSED [100%]
+
+================================== FAILURES ===================================
+___________________________ test_consent_recording ____________________________
+
+    @pytest.mark.asyncio
+    async def test_consent_recording():
+        db = AsyncMock()
+        service = ConsentService()
+        user_id = uuid.uuid4()
+    
+        # Mock database responses for active consent check
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        db.execute = AsyncMock(return_value=mock_result)
+    
+        # Record grant
+        record = await service.record_consent_grant(db, user_id, "192.168.1.1", "Chrome", "EXPLICIT_OPT_IN")
+        assert record.user_id == user_id
+>       assert record.is_active is True
+               ^^^^^^^^^^^^^^^^
+E       AttributeError: 'Consent' object has no attribute 'is_active'
+
+tests\layer2\test_layer2_components.py:159: AttributeError
+============================== warnings summary ===============================
+tests/layer2/test_layer2_components.py::test_consent_recording
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\consent\consent_service.py:129: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(consent)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/layer2/test_layer2_components.py::test_consent_recording
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\consent\consent_service.py:144: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(history)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/layer2/test_layer2_components.py::test_emergency_contact_registration
+  C:\Users\LENOVO\Downloads\phaseguard_layer2_v2\phaseguard\app\emergency\contact_service.py:83: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    db.add(contact)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/layer2/test_layer2_components.py::test_consent_recording - Attri...
+================== 1 failed, 11 passed, 3 warnings in 3.65s ===================

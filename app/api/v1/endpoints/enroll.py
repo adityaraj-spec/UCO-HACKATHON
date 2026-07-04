@@ -8,11 +8,13 @@ Enroll a user's voiceprint from multiple WAV recordings.
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.database.session import get_db
+from app.middleware.jwt_auth import get_current_user_id
+from app.middleware.rate_limiter import limiter
 from app.schemas.enrollment import EnrollmentResponse
 from app.services.enrollment_service import EnrollmentService
 from app.utils.exceptions import (
@@ -38,11 +40,13 @@ router = APIRouter()
         "PostgreSQL via pgvector."
     ),
 )
+@limiter.limit("3/hour")
 async def enroll_user_voiceprint(
-    user_id: uuid.UUID = Form(..., description="UUID of the user to enroll"),
+    request: Request,
     files: list[UploadFile] = File(
         ..., description="One or more WAV/FLAC/MP3 recordings of the user's voice"
     ),
+    user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ) -> EnrollmentResponse:
     if not files:
@@ -66,6 +70,10 @@ async def enroll_user_voiceprint(
     except InvalidAudioFileError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=exc.message
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
     except Exception as exc:  # noqa: BLE001
         log.exception("Unexpected error during enrollment")

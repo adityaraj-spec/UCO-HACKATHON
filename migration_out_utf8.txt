@@ -1,0 +1,452 @@
+python : INFO  [alembic.ru
+ntime.migration] Context 
+impl PostgresqlImpl.
+At line:1 char:1
++ python -m alembic 
+upgrade head > 
+migration_out.txt 2>&1
++ ~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~
+    + CategoryInfo        
+      : NotSpecified: (I  
+  NFO  [alembic....Post   
+ gresqlImpl.:String) [    
+], RemoteException
+    + FullyQualifiedError 
+   Id : NativeCommandErr  
+  or
+ 
+INFO  [alembic.runtime.mig
+ration] Will assume 
+transactional DDL.
+INFO  [alembic.runtime.mig
+ration] Running upgrade 
+0001_initial_schema -> 
+0002_layer2_schema, 
+create layer 2 schema 
+(enrollments, 
+anchor_embeddings, 
+rolling_embeddings, 
+auth_sessions, 
+auth_history, consents, 
+audit_logs, 
+challenge_phrases, 
+emergency_contacts, 
+emergency_access_log, 
+user_thresholds, 
+voice_metadata)
+Traceback (most recent 
+call last):
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1969, in 
+_exec_single_context
+    
+self.dialect.do_execute(
+    
+~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, 
+str_statement, 
+effective_parameters, 
+context
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\defa
+ult.py", line 952, in 
+do_execute
+    
+cursor.execute(statement, 
+parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^
+^^^^^^^^^^^^^^^
+psycopg2.errors.DuplicateT
+able: relation 
+"anchor_embeddings" 
+already exists
+
+
+The above exception was 
+the direct cause of the 
+following exception:
+
+Traceback (most recent 
+call last):
+  File "<frozen runpy>", 
+line 203, in 
+_run_module_as_main
+  File "<frozen runpy>", 
+line 88, in _run_code
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\__main__.py", 
+line 4, in <module>
+    main(prog="alembic")
+    ~~~~^^^^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\config.py", 
+line 1047, in main
+    CommandLine(prog=prog)
+.main(argv=argv)
+    ~~~~~~~~~~~~~~~~~~~~~~
+~~~~~^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\config.py", 
+line 1037, in main
+    self.run_cmd(cfg, 
+options)
+    
+~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\config.py", 
+line 971, in run_cmd
+    fn(
+    ~~^
+        config,
+        ^^^^^^^
+        
+*[getattr(options, k, 
+None) for k in 
+positional],
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^
+        **{k: 
+getattr(options, k, None) 
+for k in kwarg},
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\command.py", 
+line 490, in upgrade
+    script.run_env()
+    ~~~~~~~~~~~~~~^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\script\base.py
+", line 556, in run_env
+    util.load_python_file(
+self.dir, "env.py")
+    ~~~~~~~~~~~~~~~~~~~~~^
+^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\util\pyfiles.p
+y", line 116, in 
+load_python_file
+    module = 
+load_module_py(module_id, 
+path)
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\util\pyfiles.p
+y", line 136, in 
+load_module_py
+    spec.loader.exec_modul
+e(module)  # type: ignore
+    ~~~~~~~~~~~~~~~~~~~~~~
+~^^^^^^^^
+  File "<frozen importlib.
+_bootstrap_external>", 
+line 759, in exec_module
+  File "<frozen 
+importlib._bootstrap>", 
+line 491, in 
+_call_with_frames_removed
+  File "C:\Users\LENOVO\Do
+wnloads\phaseguard_layer2_
+v2\phaseguard\alembic\env.
+py", line 77, in <module>
+    
+run_migrations_online()
+    
+~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\LENOVO\Do
+wnloads\phaseguard_layer2_
+v2\phaseguard\alembic\env.
+py", line 71, in 
+run_migrations_online
+    
+context.run_migrations()
+    
+~~~~~~~~~~~~~~~~~~~~~~^^
+  File "<string>", line 
+8, in run_migrations
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\runtime\enviro
+nment.py", line 969, in 
+run_migrations
+    self.get_context().run
+_migrations(**kw)
+    ~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\runtime\migrat
+ion.py", line 626, in 
+run_migrations
+    
+step.migration_fn(**kw)
+    
+~~~~~~~~~~~~~~~~~^^^^^^
+  File "C:\Users\LENOVO\Do
+wnloads\phaseguard_layer2_
+v2\phaseguard\alembic\vers
+ions\0002_layer2_schema.py
+", line 38, in upgrade
+    op.create_table(
+    ~~~~~~~~~~~~~~~^
+        
+"anchor_embeddings",
+        
+^^^^^^^^^^^^^^^^^^^^
+    ...<14 lines>...
+        sa.Column("deactiv
+ated_at", sa.DateTime(time
+zone=True), 
+nullable=True),
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^
+    )
+    ^
+  File "<string>", line 
+8, in create_table
+  File "<string>", line 
+3, in create_table
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\operations\ops
+.py", line 1331, in 
+create_table
+    return 
+operations.invoke(op)
+           
+~~~~~~~~~~~~~~~~~^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\operations\bas
+e.py", line 452, in invoke
+    return fn(self, 
+operation)
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\operations\toi
+mpl.py", line 140, in 
+create_table
+    operations.impl.create
+_table(table, **kw)
+    ~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\ddl\impl.py", 
+line 442, in create_table
+    self._exec(schema.Crea
+teTable(table, **kw))
+    ~~~~~~~~~~^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\alembic\ddl\impl.py", 
+line 256, in _exec
+    return 
+conn.execute(construct, 
+params)
+           ~~~~~~~~~~~~^^^
+^^^^^^^^^^^^^^^^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1421, in 
+execute
+    return meth(
+        self,
+        
+distilled_parameters,
+        execution_options 
+or NO_OPTIONS,
+    )
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\sql\ddl.py"
+, line 188, in 
+_execute_on_connection
+    return 
+connection._execute_ddl(
+           
+~~~~~~~~~~~~~~~~~~~~~~~^
+        self, 
+distilled_params, 
+execution_options
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1532, in 
+_execute_ddl
+    ret = 
+self._execute_context(
+        dialect,
+    ...<4 lines>...
+        compiled,
+    )
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1848, in 
+_execute_context
+    return 
+self._exec_single_context(
+           
+~~~~~~~~~~~~~~~~~~~~~~~~~^
+        dialect, context, 
+statement, parameters
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1988, in 
+_exec_single_context
+    self._handle_dbapi_exc
+eption(
+    ~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~^
+        e, str_statement, 
+effective_parameters, 
+cursor, context
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 2365, in 
+_handle_dbapi_exception
+    raise sqlalchemy_excep
+tion.with_traceback(exc_in
+fo[2]) from e
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\base
+.py", line 1969, in 
+_exec_single_context
+    
+self.dialect.do_execute(
+    
+~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, 
+str_statement, 
+effective_parameters, 
+context
+        ^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^
+    )
+    ^
+  File "C:\Users\LENOVO\Ap
+pData\Local\Programs\Pytho
+n\Python314\Lib\site-packa
+ges\sqlalchemy\engine\defa
+ult.py", line 952, in 
+do_execute
+    
+cursor.execute(statement, 
+parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^
+^^^^^^^^^^^^^^^
+sqlalchemy.exc.Programming
+Error: (psycopg2.errors.Du
+plicateTable) relation 
+"anchor_embeddings" 
+already exists
+
+[SQL: 
+CREATE TABLE 
+anchor_embeddings (
+	id UUID NOT NULL, 
+	user_id UUID NOT NULL, 
+	encrypted_embedding 
+BYTEA NOT NULL, 
+	encryption_nonce BYTEA 
+NOT NULL, 
+	embedding_hash 
+VARCHAR(64) NOT NULL, 
+	key_id VARCHAR(128) NOT 
+NULL, 
+	template_version INTEGER 
+DEFAULT '1' NOT NULL, 
+	is_active BOOLEAN 
+DEFAULT 'true' NOT NULL, 
+	enrollment_quality_score 
+FLOAT, 
+	recording_count INTEGER 
+DEFAULT '5' NOT NULL, 
+	embedding_dim INTEGER 
+DEFAULT '192' NOT NULL, 
+	enrolled_via VARCHAR(32) 
+DEFAULT 'MOBILE_APP' NOT 
+NULL, 
+	created_at TIMESTAMP 
+WITH TIME ZONE DEFAULT 
+now() NOT NULL, 
+	updated_at TIMESTAMP 
+WITH TIME ZONE DEFAULT 
+now() NOT NULL, 
+	deactivated_at TIMESTAMP 
+WITH TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (user_id)
+)
+
+]
+(Background on this error 
+at: https://sqlalche.me/e/
+20/f405)

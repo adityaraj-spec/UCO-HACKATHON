@@ -149,14 +149,17 @@ async def test_consent_recording():
     user_id = uuid.uuid4()
     
     # Mock database responses for active consent check
-    db.execute = AsyncMock()
-    db.execute.return_value.scalars.return_value.first.return_value = None
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    db.execute = AsyncMock(return_value=mock_result)
 
     # Record grant
     record = await service.record_consent_grant(db, user_id, "192.168.1.1", "Chrome", "EXPLICIT_OPT_IN")
     assert record.user_id == user_id
-    assert record.is_active is True
+    assert record.status == "ACTIVE"
     assert record.consent_token is not None
+
+
 
 
 @pytest.mark.asyncio

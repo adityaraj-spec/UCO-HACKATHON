@@ -29,15 +29,36 @@ class AnchorEmbeddingRepository:
         encryption_nonce: bytes,
         embedding_hash: str,
         key_id: str,
+        **kwargs,
     ) -> AnchorEmbedding:
-        anchor = AnchorEmbedding(
-            user_id=user_id,
-            encrypted_embedding=encrypted_embedding,
-            encryption_nonce=encryption_nonce,
-            embedding_hash=embedding_hash,
-            key_id=key_id,
-            is_active=True,
-        )
-        self.session.add(anchor)
+        # Check if an anchor already exists for this user (unique constraint)
+        stmt = select(AnchorEmbedding).where(AnchorEmbedding.user_id == user_id)
+        res = await self.session.execute(stmt)
+        anchor = res.scalars().first()
+
+        if anchor:
+            anchor.encrypted_embedding = encrypted_embedding
+            anchor.encryption_nonce = encryption_nonce
+            anchor.embedding_hash = embedding_hash
+            anchor.key_id = key_id
+            anchor.is_active = True
+            anchor.template_version += 1
+            for k, v in kwargs.items():
+                if hasattr(anchor, k):
+                    setattr(anchor, k, v)
+        else:
+            anchor = AnchorEmbedding(
+                user_id=user_id,
+                encrypted_embedding=encrypted_embedding,
+                encryption_nonce=encryption_nonce,
+                embedding_hash=embedding_hash,
+                key_id=key_id,
+                is_active=True,
+                template_version=1,
+                **kwargs,
+            )
+            self.session.add(anchor)
+
         await self.session.flush()
         return anchor
+

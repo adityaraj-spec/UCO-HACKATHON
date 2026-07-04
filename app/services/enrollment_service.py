@@ -79,6 +79,8 @@ class EnrollmentService:
             user = await self.user_repo.get_by_id(user_id)
             if not user:
                 raise UserNotFoundError(str(user_id))
+            self._ensure_user_can_enroll(user)
+            await self._ensure_consent_for_enrollment(user_id)
 
             if not audio_files:
                 raise ValueError("At least one audio file must be provided.")
@@ -129,6 +131,15 @@ class EnrollmentService:
                 encryption_nonce=nonce,
                 embedding_hash=val_hash,
                 key_id=key_used,
+                enrolled_via=settings.ENROLLMENT_CHANNEL,
+                recording_count=len(embeddings),
+                embedding_dim=int(anchor_emb.shape[0]),
+            )
+
+            # Clear any existing rolling pool entries before seeding fresh ones
+            from sqlalchemy import delete as sql_delete
+            await self.db.execute(
+                sql_delete(RollingEmbedding).where(RollingEmbedding.user_id == user_id)
             )
 
             # Seed rolling pool with 3 copies of the anchor
@@ -194,10 +205,11 @@ class EnrollmentService:
         """
         Start a new enrollment session if DPDP consent is active.
         """
-        # Step 1: Pre-requisite: DPDP Consent check
-        has_consent = await self.consent_service.verify_active_consent(self.db, user_id)
-        if not has_consent:
-            raise PermissionError("DPDP consent is required before initializing biometric voice enrollment.")
+        user = await self.user_repo.get_by_id(user_id)
+        if not user:
+            raise UserNotFoundError(str(user_id))
+        self._ensure_user_can_enroll(user)
+        await self._ensure_consent_for_enrollment(user_id)
 
         # Step 2: Clear any active stale session and create a new one
         active = await self.enrollment_repo.get_active_session(user_id)
@@ -377,14 +389,21 @@ class EnrollmentService:
                 encryption_nonce=nonce,
                 embedding_hash=val_hash,
                 key_id=key_used,
+                enrollment_quality_score=float(np.mean(scores)),
+                enrolled_via=settings.ENROLLMENT_CHANNEL,
+                recording_count=sess.samples_accepted,
+                embedding_dim=int(anchor_emb.shape[0]),
+            )
+
+            # Clear old rolling pool for this user before seeding fresh baseline
+            from sqlalchemy import delete as sql_delete, select as sql_select
+            await self.db.execute(
+                sql_delete(RollingEmbedding).where(RollingEmbedding.user_id == user_id)
             )
 
             # Initialize rolling pool with 3 copies of the anchor (as baseline)
-            # This ensures similarity scores can fall back safely to ensemble modes
             for pos in range(3):
-                # Apply same encryption (unique nonces generated during each vault call)
                 r_enc_blob, r_nonce, r_val_hash, r_key_used = self.vault.generate_template(user_id, anchor_emb)
-                
                 roll_entry = RollingEmbedding(
                     user_id=user_id,
                     encrypted_embedding=r_enc_blob,
@@ -406,26 +425,41 @@ class EnrollmentService:
             ut.enrollment_quality_score = float(np.mean(scores))
             self.db.add(ut)
 
-            # Save aggregations in VoiceMetadata profiles
+            # Step 6b: Upsert VoiceMetadata (unique constraint on user_id)
             avg_snr = float(np.mean(snr_vals))
             q_level = "EXCELLENT" if avg_snr > 30 else ("HIGH" if avg_snr > 23 else "MEDIUM")
 
-            v_meta = VoiceMetadata(
-                user_id=user_id,
-                enrollment_session_id=session_id,
-                sample_count=sess.samples_accepted,
-                avg_snr_db=avg_snr,
-                min_snr_db=float(np.min(snr_vals)),
-                max_snr_db=float(np.max(snr_vals)),
-                avg_voice_ratio=float(np.mean(vr_vals)),
-                avg_duration_seconds=float(np.mean(dur_vals)),
-                avg_quality_score=float(np.mean(scores)),
-                enrollment_quality=q_level,
-                enrolled_via="FASTAPI_L2_SERVICE",
-                sample_rate_used=16000,
-                embedding_model="ECAPA-TDNN",
+            vm_res = await self.db.execute(
+                sql_select(VoiceMetadata).where(VoiceMetadata.user_id == user_id)
             )
-            self.db.add(v_meta)
+            v_meta = vm_res.scalars().first()
+            if v_meta:
+                v_meta.enrollment_session_id = session_id
+                v_meta.sample_count = sess.samples_accepted
+                v_meta.avg_snr_db = avg_snr
+                v_meta.min_snr_db = float(np.min(snr_vals))
+                v_meta.max_snr_db = float(np.max(snr_vals))
+                v_meta.avg_voice_ratio = float(np.mean(vr_vals))
+                v_meta.avg_duration_seconds = float(np.mean(dur_vals))
+                v_meta.avg_quality_score = float(np.mean(scores))
+                v_meta.enrollment_quality = q_level
+            else:
+                v_meta = VoiceMetadata(
+                    user_id=user_id,
+                    enrollment_session_id=session_id,
+                    sample_count=sess.samples_accepted,
+                    avg_snr_db=avg_snr,
+                    min_snr_db=float(np.min(snr_vals)),
+                    max_snr_db=float(np.max(snr_vals)),
+                    avg_voice_ratio=float(np.mean(vr_vals)),
+                    avg_duration_seconds=float(np.mean(dur_vals)),
+                    avg_quality_score=float(np.mean(scores)),
+                    enrollment_quality=q_level,
+                    enrolled_via=settings.ENROLLMENT_CHANNEL,
+                    sample_rate_used=16000,
+                    embedding_model="ECAPA-TDNN",
+                )
+                self.db.add(v_meta)
 
             # Step 7: Update session status
             sess.status = "COMPLETED"
@@ -462,3 +496,18 @@ class EnrollmentService:
         except Exception as e:
             logger.exception("Finalize enrollment failed for user: %s", user_id)
             raise e
+
+    def _ensure_user_can_enroll(self, user) -> None:
+        """Block biometric enrollment for inactive or non-verified KYC accounts."""
+        if not user.is_active:
+            raise PermissionError("Account is frozen. Voice enrollment is blocked.")
+        if user.kyc_status != "VERIFIED":
+            raise PermissionError("KYC verification is required before biometric voice enrollment.")
+
+    async def _ensure_consent_for_enrollment(self, user_id: uuid.UUID) -> None:
+        """Enforce the configured DPDP consent gate before any enrollment path."""
+        if not settings.CONSENT_REQUIRED_FOR_ENROLLMENT:
+            return
+        has_consent = await self.consent_service.verify_active_consent(self.db, user_id)
+        if not has_consent:
+            raise PermissionError("DPDP consent is required before biometric voice enrollment.")

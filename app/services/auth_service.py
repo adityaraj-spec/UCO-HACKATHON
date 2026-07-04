@@ -86,6 +86,15 @@ class AuthService:
         """
         now_utc = datetime.now(timezone.utc)
         logger.info("Initializing voice auth transaction for user ID: %s", user_id)
+        await self.audit.log_event(
+            db=self.db,
+            event_type=AuditEventType.AUTH_ATTEMPT,
+            user_id=user_id,
+            actor="CUSTOMER",
+            ip_address=ip_address,
+            details="Voice challenge-response authentication attempt started.",
+            payload={"session_id": session_id, "device_fingerprint": device_fingerprint},
+        )
 
         # ------------------------------------------------------------------ #
         # Step 1: Challenge Replay Guard (validate signing + consume JTI)    #
@@ -132,6 +141,20 @@ class AuthService:
         )
 
         if fraud_val.action_required == "REJECT":
+            await self.audit.log_event(
+                db=self.db,
+                event_type=AuditEventType.FRAUD_FLAG,
+                user_id=user_id,
+                actor="FRAUD_ENGINE",
+                ip_address=ip_address,
+                details=f"Fraud engine rejected authentication attempt: {fraud_val.reason}",
+                payload={
+                    "session_id": session_id,
+                    "risk_level": fraud_val.risk_level,
+                    "score": fraud_val.score,
+                    "transaction_id": fraud_val.transaction_id,
+                },
+            )
             await self._log_auth_failure(
                 user_id=user_id, session_id=session_id, phrase_id=phrase_id,
                 reason=f"Fraud engine auto-block: {fraud_val.reason}", ip=ip_address,
@@ -165,7 +188,8 @@ class AuthService:
             consec_failures=threshold_model.consecutive_failures,
             illness_active=threshold_model.illness_window_active,
             fraud_risk_level=fraud_val.risk_level,
-            ip_device_trusted=ip_device_trusted
+            ip_device_trusted=ip_device_trusted,
+            enrolled_via=anchor_model.enrolled_via
         )
 
         # ------------------------------------------------------------------ #
@@ -176,6 +200,25 @@ class AuthService:
             # Load file bytes to feed check interfaces
             with open(temp_path, "rb") as f:
                 raw_bytes = f.read()
+
+            # Voice biometric audio-sample replay protection guard
+            import hashlib
+            audio_hash = hashlib.sha256(raw_bytes).hexdigest()
+            from app.cache.redis_client import get_redis_client
+            redis_client = await get_redis_client()
+            cache_key = f"voice_replay:{audio_hash}"
+            if await redis_client.get(cache_key):
+                await self.audit.log_event(
+                    db=self.db,
+                    event_type=AuditEventType.REPLAY_DETECTED,
+                    user_id=user_id,
+                    actor="CUSTOMER",
+                    ip_address=ip_address,
+                    details=f"Voice audio sample replay attempt detected and rejected (hash: {audio_hash}).",
+                    payload={"audio_hash": audio_hash}
+                )
+                raise ValueError("Duplicate voice sample submission detected. Action rejected by replay protection.")
+            await redis_client.set(cache_key, "1", expire_seconds=300)
 
             # Preprocess / VAD / Noise suppressor
             proc = self.audio_pipeline.process_bytes(raw_bytes, for_enrollment=False)
@@ -397,7 +440,322 @@ class AuthService:
         finally:
             cleanup_temp_file(temp_path)
 
+    async def authenticate_direct(
+        self,
+        user_id: uuid.UUID,
+        audio_file: UploadFile,
+        ip_address: str,
+        device_fingerprint: str,
+        latitude: float | None = None,
+        longitude: float | None = None,
+    ) -> dict:
+        """
+        Directly authenticate a user. Bypasses JWT challenge-token / JTI check.
+        """
+        now_utc = datetime.now(timezone.utc)
+        session_id = f"direct_{uuid.uuid4().hex}"
+        phrase_id = "DIRECT"
+        logger.info("Initializing direct voice auth transaction for user ID: %s", user_id)
+        await self.audit.log_event(
+            db=self.db,
+            event_type=AuditEventType.AUTH_ATTEMPT,
+            user_id=user_id,
+            actor="INTERNAL_SERVICE",
+            ip_address=ip_address,
+            details="Direct internal voice authentication attempt started.",
+            payload={"session_id": session_id, "device_fingerprint": device_fingerprint},
+        )
+
+        # Step 1: Context Profile & Fraud Scoring
+        fraud_val = self.fraud_service.evaluate_risk(
+            user_id=user_id,
+            ip_address=ip_address,
+            device_fingerprint=device_fingerprint,
+            latitude=latitude,
+            longitude=longitude
+        )
+
+        if fraud_val.action_required == "REJECT":
+            await self.audit.log_event(
+                db=self.db,
+                event_type=AuditEventType.FRAUD_FLAG,
+                user_id=user_id,
+                actor="FRAUD_ENGINE",
+                ip_address=ip_address,
+                details=f"Fraud engine rejected direct authentication attempt: {fraud_val.reason}",
+                payload={
+                    "session_id": session_id,
+                    "risk_level": fraud_val.risk_level,
+                    "score": fraud_val.score,
+                    "transaction_id": fraud_val.transaction_id,
+                },
+            )
+            await self._log_auth_failure(
+                user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                reason=f"Fraud engine auto-block: {fraud_val.reason}", ip=ip_address,
+                risk_lvl=fraud_val.risk_level, risk_score=fraud_val.score
+            )
+            return {
+                "authenticated": False,
+                "decision": "REJECT",
+                "reason": f"Access blocked by policy security engine: {fraud_val.reason}",
+                "transaction_id": fraud_val.transaction_id,
+            }
+
+        # Step 2: Fetch Biometric Anchors & Thresholds
+        anchor_model = await self.anchor_repo.get_by_user_id(user_id)
+        if not anchor_model:
+            await self._log_auth_failure(
+                user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                reason="No voiceprint enrollment exists.", ip=ip_address
+            )
+            return {"authenticated": False, "decision": "REJECT", "reason": "No enrolled voice print profile found."}
+
+        rolling_pool = await self.rolling_repo.get_by_user_id(user_id)
+        threshold_model = await self.threshold_repo.get_or_create(user_id)
+
+        # Calibrate current threshold
+        ip_device_trusted = (fraud_val.score < 0.3)
+        current_threshold = self.threshold_engine.calibrate_threshold(
+            user_threshold=threshold_model,
+            consec_failures=threshold_model.consecutive_failures,
+            illness_active=threshold_model.illness_window_active,
+            fraud_risk_level=fraud_val.risk_level,
+            ip_device_trusted=ip_device_trusted,
+            enrolled_via=anchor_model.enrolled_via
+        )
+
+        # Step 3: Process Incoming Audio Sample
+        temp_path = await save_upload_to_temp(audio_file)
+        try:
+            # Load file bytes to feed check interfaces
+            with open(temp_path, "rb") as f:
+                raw_bytes = f.read()
+
+            # Voice biometric audio-sample replay protection guard
+            import hashlib
+            audio_hash = hashlib.sha256(raw_bytes).hexdigest()
+            from app.cache.redis_client import get_redis_client
+            redis_client = await get_redis_client()
+            cache_key = f"voice_replay:{audio_hash}"
+            if await redis_client.get(cache_key):
+                await self.audit.log_event(
+                    db=self.db,
+                    event_type=AuditEventType.REPLAY_DETECTED,
+                    user_id=user_id,
+                    actor="CUSTOMER",
+                    ip_address=ip_address,
+                    details=f"Voice audio sample replay attempt detected and rejected during direct auth (hash: {audio_hash}).",
+                    payload={"audio_hash": audio_hash}
+                )
+                raise ValueError("Duplicate voice sample submission detected. Action rejected by replay protection.")
+            await redis_client.set(cache_key, "1", expire_seconds=300)
+
+            # Preprocess / VAD / Noise suppressor
+            proc = self.audio_pipeline.process_bytes(raw_bytes, for_enrollment=False)
+            if not proc.accepted:
+                await self._log_auth_failure(
+                    user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                    reason=f"Audio rejected: {proc.rejection_reason}", ip=ip_address,
+                    risk_lvl=fraud_val.risk_level, risk_score=fraud_val.score
+                )
+                return {"authenticated": False, "decision": "REJECT", "reason": proc.rejection_reason}
+
+            # Step 4: Anti-Spoofing & Liveness Gating (without fixed phrase check)
+            spoof_res = self.antispoof_engine.analyze_liveness(raw_bytes, None)
+            if spoof_res.is_spoof:
+                threshold_model.consecutive_failures += 1
+                await self.db.flush()
+
+                await self._log_auth_failure(
+                    user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                    reason=spoof_res.rejection_reason or "Spoof signature matched", ip=ip_address,
+                    liveliness_score=spoof_res.confidence, liveness_passed=False,
+                    risk_lvl="CRITICAL", risk_score=max(0.9, fraud_val.score)
+                )
+
+                # Trigger emergency SIEM alerts for live presentation attack
+                from app.fraud.kafka_publisher import get_kafka_publisher
+                get_kafka_publisher().publish_event("BIOMETRIC_PRESENTATION_ATTACK", {
+                    "user_id": str(user_id),
+                    "session_id": session_id,
+                    "confidence": spoof_res.confidence,
+                    "type": spoof_res.method_detected,
+                })
+
+                return {"authenticated": False, "decision": "REJECT", "reason": spoof_res.rejection_reason}
+
+            # Step 5: Extract & BioHash Transform incoming voice
+            import soundfile as sf
+            denoised_temp = os.path.join(settings.TEMP_DIR, f"auth_direct_{uuid.uuid4().hex}.wav")
+            os.makedirs(settings.TEMP_DIR, exist_ok=True)
+            sf.write(denoised_temp, proc.waveform, proc.sample_rate)
+
+            try:
+                emb = self.ecapa.extract_embedding(denoised_temp)
+            finally:
+                cleanup_temp_file(denoised_temp)
+
+            # Get BioHash challenge template mapping user's master secret key ID
+            live_template = self.vault.generate_challenge_template(user_id, emb, anchor_model.key_id)
+
+            # Step 6: Decrypt Anchor & Rolling Templates
+            anchor_vector = self.vault.decrypt_template(
+                user_id=user_id,
+                encrypted_embedding=anchor_model.encrypted_embedding,
+                nonce=anchor_model.encryption_nonce,
+                key_id=anchor_model.key_id
+            )
+
+            rolling_vectors = []
+            for r in rolling_pool:
+                try:
+                    dec_r = self.vault.decrypt_template(
+                        user_id=user_id,
+                        encrypted_embedding=r.encrypted_embedding,
+                        nonce=r.encryption_nonce,
+                        key_id=r.key_id
+                    )
+                    rolling_vectors.append(dec_r)
+                except Exception as ex:
+                    logger.error("Failed to decrypt rolling embedding version: %s", ex)
+
+            # Step 7: Multi-template Weighted Cosine Similarity Scoring
+            sim_score, anchor_sim, rolling_avg = self.scorer.compute_score(
+                auth_template=live_template,
+                anchor_template=anchor_vector,
+                rolling_templates=rolling_vectors
+            )
+
+            # Step 8: Decision bands classification
+            band, description = classify_score(sim_score, current_threshold, settings.STEP_UP_LOWER_BOUND)
+
+            # Step 9: Commit results and schedule rolling updates
+            if band == DecisionBand.PASS:
+                # Successful verification
+                threshold_model.consecutive_failures = 0
+                threshold_model.last_successful_auth_at = now_utc
+
+                # Record database metrics
+                await self.history_repo.create(
+                    user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                    attempt_number=threshold_model.consecutive_failures + 1,
+                    liveness_score=spoof_res.confidence, is_liveness_passed=True,
+                    similarity_score=sim_score, is_similarity_passed=True,
+                    final_decision="PASS", risk_score=fraud_val.score, risk_level=fraud_val.risk_level,
+                    ip_device_trusted=ip_device_trusted
+                )
+
+                # Check rolling update threshold criteria (>0.92 cosine sim score)
+                if sim_score >= settings.ROLLING_UPDATE_TRIGGER_THRESHOLD:
+                    # Update pool in DB
+                    updated = await self.rolling_manager.update_pool(
+                        session=self.db,
+                        user_id=user_id,
+                        auth_history_id=user_id,
+                        raw_embedding=emb,
+                        auth_score=sim_score,
+                        anchor_template=anchor_vector,
+                        existing_rolling=rolling_pool
+                    )
+                    
+                    if updated:
+                        # Evict Redis cache to keep synchronised
+                        await self.session_cache.invalidate_embeddings_cache(user_id)
+                        await self.audit.log_event(
+                            db=self.db,
+                            event_type=AuditEventType.TEMPLATE_UPDATE,
+                            user_id=user_id,
+                            actor="SYSTEM_SCHEDULER",
+                            ip_address="127.0.0.1",
+                            details=f"Rolling embedding pool updated. Match score: {sim_score:.3f}",
+                            payload={"score": sim_score}
+                        )
+
+                # Log event in Audit Vault
+                await self.audit.log_event(
+                    db=self.db,
+                    event_type=AuditEventType.AUTH_PASS,
+                    user_id=user_id,
+                    actor="CUSTOMER",
+                    ip_address=ip_address,
+                    details=f"Direct voice authentication passed. Score: {sim_score:.3f} >= threshold: {current_threshold:.3f}",
+                    payload={"score": sim_score, "threshold": current_threshold}
+                )
+
+                return {
+                    "authenticated": True,
+                    "decision": "PASS",
+                    "similarity_score": round(sim_score, 3),
+                    "reason": "OK",
+                    "transaction_id": fraud_val.transaction_id,
+                }
+
+            elif band == DecisionBand.STEP_UP:
+                threshold_model.consecutive_failures += 1
+
+                await self.history_repo.create(
+                    user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                    attempt_number=threshold_model.consecutive_failures,
+                    liveness_score=spoof_res.confidence, is_liveness_passed=True,
+                    similarity_score=sim_score, is_similarity_passed=False,
+                    final_decision="STEP_UP", risk_score=fraud_val.score, risk_level=fraud_val.risk_level,
+                    failure_reason=description, ip_device_trusted=ip_device_trusted
+                )
+
+                await self.audit.log_event(
+                    db=self.db,
+                    event_type=AuditEventType.AUTH_STEPUP,
+                    user_id=user_id,
+                    actor="CUSTOMER",
+                    ip_address=ip_address,
+                    details=f"Direct voice authentication soft-failed. Score: {sim_score:.3f}",
+                    payload={"score": sim_score, "threshold": current_threshold}
+                )
+
+                return {
+                    "authenticated": False,
+                    "decision": "STEP_UP",
+                    "similarity_score": round(sim_score, 3),
+                    "reason": "Verification score in Step-Up zone. Secondary authorization required.",
+                    "transaction_id": fraud_val.transaction_id,
+                }
+
+            else:
+                threshold_model.consecutive_failures += 1
+
+                await self.history_repo.create(
+                    user_id=user_id, session_id=session_id, phrase_id=phrase_id,
+                    attempt_number=threshold_model.consecutive_failures,
+                    liveness_score=spoof_res.confidence, is_liveness_passed=True,
+                    similarity_score=sim_score, is_similarity_passed=False,
+                    final_decision="FAIL", risk_score=fraud_val.score, risk_level=fraud_val.risk_level,
+                    failure_reason=description, ip_device_trusted=ip_device_trusted
+                )
+
+                await self.audit.log_event(
+                    db=self.db,
+                    event_type=AuditEventType.AUTH_FAIL,
+                    user_id=user_id,
+                    actor="CUSTOMER",
+                    ip_address=ip_address,
+                    details=f"Direct voice verification hard failure. Score: {sim_score:.3f} < step_up zone limit",
+                    payload={"score": sim_score, "threshold": current_threshold}
+                )
+
+                return {
+                    "authenticated": False,
+                    "decision": "FAIL",
+                    "similarity_score": round(sim_score, 3),
+                    "reason": f"Biometric speaker identity mismatch: {description}",
+                    "transaction_id": fraud_val.transaction_id,
+                }
+
+        finally:
+            cleanup_temp_file(temp_path)
+
     async def _log_auth_failure(
+
         self,
         user_id: uuid.UUID,
         session_id: str,

@@ -33,17 +33,16 @@ class AuthHistoryRepository:
         hist = AuthHistory(
             user_id=user_id,
             session_id=session_id,
-            phrase_id=phrase_id,
-            attempt_number=attempt_number,
-            liveness_score=liveness_score,
-            is_liveness_passed=is_liveness_passed,
-            similarity_score=similarity_score,
-            is_similarity_passed=is_similarity_passed,
-            final_decision=final_decision,
-            risk_score=risk_score,
+            challenge_phrase_id=phrase_id,
+            auth_result=final_decision,
+            weighted_score=similarity_score,
+            anchor_similarity_score=similarity_score,
+            antispoof_confidence=liveness_score,
+            antispoof_result="PASS" if is_liveness_passed else "FAIL",
+            liveness_verified=is_liveness_passed,
+            fraud_risk_score=risk_score,
             risk_level=risk_level,
-            failure_reason=failure_reason,
-            ip_device_trusted=ip_device_trusted,
+            error_message=failure_reason,
         )
         self.session.add(hist)
         await self.session.flush()
@@ -54,8 +53,9 @@ class AuthHistoryRepository:
         since = datetime.now(timezone.utc) - timedelta(hours=24)
         stmt = select(AuthHistory).where(
             AuthHistory.user_id == user_id,
-            AuthHistory.final_decision != "PASS",
+            AuthHistory.auth_result != "PASS",
             AuthHistory.created_at >= since
         )
         res = await self.session.execute(stmt)
         return len(res.scalars().all())
+
