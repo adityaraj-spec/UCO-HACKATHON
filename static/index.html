@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PhaseGuard Unified Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-[#0d0d15] text-[#f1f3f9] font-['Outfit'] min-h-screen">
+    
+    <div class="max-w-7xl mx-auto p-6">
+        <!-- Header -->
+        <div class="p-6 mb-8 rounded-2xl bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-white/10 backdrop-blur-md">
+            <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 m-0">🛡️ PhaseGuard Unified</h1>
+            <p class="text-[#94a3b8] mt-2">AI Deepfake Detection (L1) + Speaker Verification (L2)</p>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="flex space-x-2 border-b border-white/10 mb-6">
+            <button class="tab-btn px-6 py-3 font-semibold border-b-2 border-blue-500 text-blue-400" data-target="live-stream-tab">🔴 Live Stream</button>
+            <button class="tab-btn px-6 py-3 font-semibold text-[#94a3b8] hover:text-white" data-target="file-upload-tab">📁 File Upload</button>
+            <button class="tab-btn px-6 py-3 font-semibold text-[#94a3b8] hover:text-white" data-target="enroll-tab">🗣️ Enroll Voice</button>
+        </div>
+
+        <!-- Live Stream Tab -->
+        <div id="live-stream-tab" class="tab-content active">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Control Panel -->
+                <div class="col-span-1 bg-slate-800/40 p-6 rounded-xl border border-white/10">
+                    <h3 class="text-xl font-bold mb-4">Live Audio Control</h3>
+                    <div class="mb-4">
+                        <label class="block text-sm text-slate-400 mb-1">Target User ID (for L2)</label>
+                        <input type="text" id="ws-user-id" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white" placeholder="Enter UUID">
+                    </div>
+                    <button id="btn-start-stream" class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg mb-4 transition">
+                        ▶ Start Streaming
+                    </button>
+                    <button id="btn-stop-stream" class="w-full bg-slate-600 text-white font-bold py-3 rounded-lg hidden transition">
+                        ⏹ Stop Streaming
+                    </button>
+                    <div id="stream-status" class="text-center text-slate-400 text-sm mt-2">Idle</div>
+                    
+                    <div class="mt-8 border-t border-white/10 pt-4">
+                        <h4 class="text-lg font-bold text-slate-300">Cumulative Status</h4>
+                        <div id="cumulative-timer" class="text-sm text-slate-400 mt-1">10s Rolling Window</div>
+                        <div id="cumulative-verdict" class="text-2xl font-bold mt-2 py-2 text-center rounded border border-white/10 text-slate-500">
+                            WAITING...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Metrics -->
+                <div class="col-span-1 lg:col-span-2 space-y-6">
+                    <!-- Layer 1 -->
+                    <div class="bg-slate-800/40 p-6 rounded-xl border border-white/10">
+                        <h3 class="text-xl font-bold text-purple-400 mb-4">Layer 1 (Deepfake Detection)</h3>
+                        <div class="grid grid-cols-5 gap-2 mb-4">
+                            <div class="text-center bg-slate-900/50 p-2 rounded border border-white/5">
+                                <div class="text-xs text-slate-400">Phase Jump</div>
+                                <div class="font-mono text-lg font-bold" id="metric-pjr">0.00</div>
+                            </div>
+                            <div class="text-center bg-slate-900/50 p-2 rounded border border-white/5">
+                                <div class="text-xs text-slate-400">Jitter</div>
+                                <div class="font-mono text-lg font-bold" id="metric-jit">0.00</div>
+                            </div>
+                            <div class="text-center bg-slate-900/50 p-2 rounded border border-white/5">
+                                <div class="text-xs text-slate-400">Noise Flr</div>
+                                <div class="font-mono text-lg font-bold" id="metric-nf">0.00</div>
+                            </div>
+                            <div class="text-center bg-slate-900/50 p-2 rounded border border-white/5">
+                                <div class="text-xs text-slate-400">Spectral</div>
+                                <div class="font-mono text-lg font-bold" id="metric-sf">0.00</div>
+                            </div>
+                            <div class="text-center bg-slate-900/50 p-2 rounded border border-white/5">
+                                <div class="text-xs text-slate-400">MFCC</div>
+                                <div class="font-mono text-lg font-bold" id="metric-mfcc">0.00</div>
+                            </div>
+                        </div>
+                        <div class="h-48">
+                            <canvas id="l1-radar-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Layer 2 & Combined -->
+                    <div class="grid grid-cols-2 gap-6">
+                        <div class="bg-slate-800/40 p-6 rounded-xl border border-white/10">
+                            <h3 class="text-xl font-bold text-green-400 mb-2">Layer 2 (Speaker Match)</h3>
+                            <div class="text-4xl font-extrabold mt-4" id="metric-similarity">0.000</div>
+                            <div class="text-sm text-slate-400 mt-1">Cosine Similarity</div>
+                        </div>
+                        <div class="bg-slate-800/40 p-6 rounded-xl border border-white/10">
+                            <h3 class="text-xl font-bold text-orange-400 mb-2">Combined Risk</h3>
+                            <div class="text-4xl font-extrabold mt-4" id="metric-risk-score">0.0%</div>
+                            <div class="text-sm text-slate-400 mt-1" id="metric-risk-level">Unknown</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- File Upload Tab -->
+        <div id="file-upload-tab" class="tab-content hidden">
+            <div class="bg-slate-800/40 p-8 rounded-xl border border-white/10 max-w-2xl mx-auto">
+                <h3 class="text-2xl font-bold mb-4">Static File Upload Analysis</h3>
+                <div class="mb-4">
+                    <label class="block text-sm text-slate-400 mb-1">Target User ID (for L2)</label>
+                    <input type="text" id="upload-user-id" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm text-slate-400 mb-1">Audio File (WAV/MP3/FLAC)</label>
+                    <input type="file" id="upload-file" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <button id="btn-upload" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg transition">
+                    🔍 Analyse File
+                </button>
+                <div id="upload-results" class="mt-6 hidden p-4 rounded bg-slate-900 border border-slate-700">
+                    <pre id="upload-json" class="text-xs text-green-400 overflow-x-auto"></pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- Enroll Voice Tab -->
+        <div id="enroll-tab" class="tab-content hidden">
+            <div class="bg-slate-800/40 p-8 rounded-xl border border-white/10 max-w-2xl mx-auto">
+                <h3 class="text-2xl font-bold mb-4">Enroll New Voiceprint</h3>
+                <div class="mb-4">
+                    <label class="block text-sm text-slate-400 mb-1">Name</label>
+                    <input type="text" id="enroll-name" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white" placeholder="John Doe">
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm text-slate-400 mb-1">Enrollment Audio (Min 3 secs)</label>
+                    <input type="file" id="enroll-file" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white">
+                </div>
+                <button id="btn-enroll" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-lg transition">
+                    🗣️ Register Voice
+                </button>
+                <div id="enroll-status" class="mt-4 text-center"></div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -22,6 +22,17 @@ from app.utils.windows_symlink_patch import apply_windows_symlink_fallback
 # every machine with zero special permissions or admin rights required.
 apply_windows_symlink_fallback()
 
+# Fix for newer torchaudio versions breaking SpeechBrain 1.0.0
+import torchaudio
+if not hasattr(torchaudio, 'list_audio_backends'):
+    torchaudio.list_audio_backends = lambda: ["soundfile"]
+if not hasattr(torchaudio, 'io'):
+    class DummyIO:
+        StreamReader = object
+    torchaudio.io = DummyIO
+
+
+
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
@@ -127,3 +138,15 @@ async def health() -> dict:
 
 
 app.include_router(api_router, prefix="/api/v1")
+
+from fastapi.staticfiles import StaticFiles
+import os
+
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/ui")
+async def serve_ui():
+    from fastapi.responses import FileResponse
+    return FileResponse(os.path.join(static_dir, "index.html"))

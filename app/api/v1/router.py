@@ -15,3 +15,5 @@ api_router.include_router(enroll.router, tags=["Enrollment"])
 api_router.include_router(verify.router, tags=["Verification"])
 api_router.include_router(users.router, tags=["Users"])
 api_router.include_router(history.router, tags=["History"])
+from app.api.v1.endpoints import stream
+api_router.include_router(stream.router, tags=['Streaming'])
