@@ -3,6 +3,23 @@ import sys
 import subprocess
 import time
 import urllib.request
+from pathlib import Path
+
+
+def load_dotenv_into_env(env_path: str = ".env") -> None:
+    """Manually load .env into os.environ so child processes inherit all vars."""
+    p = Path(env_path)
+    if not p.exists():
+        return
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if key and key not in os.environ:  # don't override already-set vars
+            os.environ[key] = value
 
 def is_backend_healthy(url="http://127.0.0.1:8000/health", timeout=2):
     try:
@@ -38,6 +55,8 @@ def ensure_backend_running():
     return False
 
 def main():
+    # Load .env so child processes (uvicorn) inherit all environment variables
+    load_dotenv_into_env(".env")
     # Detect the Streamlit binary in the current active python environment
     python_dir = os.path.dirname(sys.executable)
     

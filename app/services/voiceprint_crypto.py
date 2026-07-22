@@ -42,6 +42,25 @@ class VoiceprintCrypto:
     def from_env(cls) -> "VoiceprintCrypto":
         encoded = os.environ.get(VOICEPRINT_KEY_ENV)
         if not encoded:
+            # Fallback: try loading from .env file directly so this works
+            # regardless of how the server process was launched.
+            try:
+                from pathlib import Path
+                env_path = Path(__file__).resolve().parents[3] / ".env"
+                if env_path.exists():
+                    for line in env_path.read_text(encoding="utf-8").splitlines():
+                        line = line.strip()
+                        if line.startswith("#") or "=" not in line:
+                            continue
+                        k, _, v = line.partition("=")
+                        if k.strip() == VOICEPRINT_KEY_ENV and v.strip():
+                            encoded = v.strip()
+                            os.environ[VOICEPRINT_KEY_ENV] = encoded
+                        elif k.strip() == VOICEPRINT_KEY_ID_ENV and v.strip():
+                            os.environ[VOICEPRINT_KEY_ID_ENV] = v.strip()
+            except Exception:
+                pass
+        if not encoded:
             raise RuntimeError(f"{VOICEPRINT_KEY_ENV} is required to encrypt voiceprints at rest.")
         key = base64.b64decode(encoded)
         key_id = os.environ.get(VOICEPRINT_KEY_ID_ENV, "default")

@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.logging import get_logger
 from app.database.session import get_db
 from app.schemas.kyc import (
     KYCAttemptResponse,
@@ -18,6 +19,7 @@ from app.schemas.kyc import (
 from app.services.kyc_enrollment_service import KYCEnrollmentService
 
 router = APIRouter(prefix="/kyc")
+log = get_logger(__name__)
 
 
 @router.post("/session/start", response_model=KYCSessionStartResponse)
@@ -85,3 +87,10 @@ async def enrol_kyc_session(
         return KYCEnrolResponse(success=True, salt_id=salt_id, message=message)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception("Unexpected error during KYC enrolment: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Enrolment failed: {exc}",
+        ) from exc
+
