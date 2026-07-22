@@ -29,7 +29,10 @@ class VoiceprintRepository:
         result = await self.session.execute(
             select(Voiceprint).where(Voiceprint.user_id == user_id)
         )
-        return result.scalar_one_or_none()
+        voiceprint = result.scalar_one_or_none()
+        if voiceprint is not None:
+            self._attach_plaintext_voiceprint(voiceprint)
+        return voiceprint
 
     async def upsert(
         self,
@@ -50,25 +53,55 @@ class VoiceprintRepository:
         Returns:
             The persisted Voiceprint instance.
         """
+        from app.core.config import get_settings
+        import os
+        from app.services.biohash_service import BioHashService
+        from app.services.voiceprint_crypto import VoiceprintCrypto
+        settings = get_settings()
+        model_version = os.path.basename(settings.ECAPA_MODEL_SOURCE)
         embedding_list = embedding.astype(float).tolist()
+        biohash = BioHashService().compute_biohash(embedding_list)
+        crypto = VoiceprintCrypto.from_env()
+        encrypted_embedding = crypto.encrypt_embedding(embedding_list)
+        encrypted_biohash = crypto.encrypt_biohash(biohash)
 
         existing = await self.get_by_user_id(user_id)
         if existing is not None:
-            existing.embedding = embedding_list
+            existing._raw_embedding_column = None
+            existing.encrypted_embedding = encrypted_embedding.ciphertext
+            existing.embedding_nonce = encrypted_embedding.nonce
+            existing.embedding_key_id = encrypted_embedding.key_id
+            existing._raw_biohash_column = None
+            existing.encrypted_biohash = encrypted_biohash.ciphertext if encrypted_biohash else None
+            existing.biohash_nonce = encrypted_biohash.nonce if encrypted_biohash else None
+            existing.biohash_key_id = encrypted_biohash.key_id if encrypted_biohash else None
             existing.recording_count = recording_count
+            existing.model_version = model_version
+            existing.attach_plaintext(embedding_list, biohash)
             self.session.add(existing)
             await self.session.flush()
             await self.session.refresh(existing)
+            existing.attach_plaintext(embedding_list, biohash)
             return existing
 
         voiceprint = Voiceprint(
             user_id=user_id,
-            embedding=embedding_list,
+            encrypted_embedding=encrypted_embedding.ciphertext,
+            embedding_nonce=encrypted_embedding.nonce,
+            embedding_key_id=encrypted_embedding.key_id,
+            encrypted_biohash=encrypted_biohash.ciphertext if encrypted_biohash else None,
+            biohash_nonce=encrypted_biohash.nonce if encrypted_biohash else None,
+            biohash_key_id=encrypted_biohash.key_id if encrypted_biohash else None,
             recording_count=recording_count,
+            model_version=model_version,
         )
+        voiceprint._raw_embedding_column = None
+        voiceprint._raw_biohash_column = None
+        voiceprint.attach_plaintext(embedding_list, biohash)
         self.session.add(voiceprint)
         await self.session.flush()
         await self.session.refresh(voiceprint)
+        voiceprint.attach_plaintext(embedding_list, biohash)
         return voiceprint
 
     async def delete_by_user_id(self, user_id: uuid.UUID) -> bool:
@@ -79,3 +112,19 @@ class VoiceprintRepository:
         await self.session.delete(existing)
         await self.session.flush()
         return True
+
+    def _attach_plaintext_voiceprint(self, voiceprint: Voiceprint) -> None:
+        from app.services.voiceprint_crypto import VoiceprintCrypto
+        if voiceprint.encrypted_embedding and voiceprint.embedding_nonce:
+            crypto = VoiceprintCrypto.from_env()
+            embedding = crypto.decrypt_embedding(
+                voiceprint.encrypted_embedding, voiceprint.embedding_nonce
+            )
+            biohash = crypto.decrypt_biohash(
+                voiceprint.encrypted_biohash, voiceprint.biohash_nonce
+            )
+            voiceprint.attach_plaintext(embedding, biohash)
+        else:
+            voiceprint.attach_plaintext(
+                voiceprint._raw_embedding_column, voiceprint._raw_biohash_column
+            )

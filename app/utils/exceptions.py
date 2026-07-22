@@ -65,6 +65,14 @@ class InsufficientRecordingsError(PhaseGuardError):
         self.required = required
 
 
+class EnrollmentRejectedError(PhaseGuardError):
+    """Raised when enrollment audio fails liveness or quality checks."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"Enrollment audio rejected: {reason}")
+        self.reason = reason
+
+
 class ModelLoadError(PhaseGuardError):
     """Raised when the ECAPA-TDNN model fails to load."""
 

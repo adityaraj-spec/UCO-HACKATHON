@@ -1,0 +1,9 @@
+{
+  "status": "success",
+  "sample_audio": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\data\\sanity_sample.wav",
+  "baseline_model": "speechbrain/spkrec-ecapa-voxceleb",
+  "trained_model_checkpoint": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\model_checkpoints\\trained_ecapa",
+  "cosine_similarity": 0.776662,
+  "embeddings_are_identical": false,
+  "sanity_check_passed": true
+}

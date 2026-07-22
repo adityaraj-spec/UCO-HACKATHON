@@ -10,18 +10,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.session import get_db
 from app.services.verification_service import VerificationService
 from scripts.features import extract_all
-from scripts.train import PhaseGuardL1
 import os
 
 router = APIRouter()
 
-# Load Layer 1 Model Globally
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-l1_model = PhaseGuardL1().to(device)
 model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "models", "layer1_mobilenet.pth")
-if os.path.exists(model_path):
-    l1_model.load_state_dict(torch.load(model_path, map_location=device))
-l1_model.eval()
+_l1_model = None
+
+
+def get_l1_model():
+    """Lazy-load Layer 1 so importing the API router does not require torchvision/model artifacts."""
+    global _l1_model
+    if _l1_model is not None:
+        return _l1_model
+
+    from scripts.train import PhaseGuardL1
+
+    model = PhaseGuardL1().to(device)
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    _l1_model = model
+    return _l1_model
 
 @router.websocket("/stream/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
@@ -58,6 +69,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: uuid.UUID, db: Async
                     if result_l1 is not None:
                         mel_t = torch.FloatTensor(result_l1['mel']).unsqueeze(0).unsqueeze(0).to(device)
                         with torch.no_grad():
+                            l1_model = get_l1_model()
                             ai_prob = float(l1_model(mel_t)[0][0])
                     
                     # 2. Layer 2 Prediction

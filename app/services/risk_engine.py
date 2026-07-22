@@ -4,16 +4,17 @@ app/services/risk_engine.py
 PhaseGuard Risk Engine.
 
 Combines the output of Layer 1 (AI/deepfake voice detection probability)
-and Layer 2 (ECAPA-TDNN speaker verification cosine similarity) into a
-single risk assessment.
+and the raw Layer 2 BioHash similarity into a single risk assessment. This
+risk level is separate from the live identity decision, which is made by
+the verification service's s-norm path.
 
 Decision rules (as specified by the PhaseGuard architecture):
 
     1. layer1_score > LAYER1_FRAUD_THRESHOLD (default 0.70)
             => risk_level = FRAUD_ALERT  (likely AI-generated voice)
 
-    2. speaker_similarity < SIMILARITY_THRESHOLD (default 0.65)
-            => risk_level = FRAUD_ALERT  (identity mismatch)
+    2. speaker_similarity < SIMILARITY_THRESHOLD
+            => risk_level = FRAUD_ALERT  (low raw Layer 2 similarity)
 
     3. otherwise
             => risk_level = CLEAN
@@ -62,8 +63,7 @@ def compute_risk(layer1_score: float, speaker_similarity: float) -> RiskResult:
 
     Args:
         layer1_score: AI-voice-detection probability from Layer 1, in [0, 1].
-        speaker_similarity: Cosine similarity from Layer 2 ECAPA-TDNN
-                             verification, in [-1, 1] (practically [0, 1]).
+        speaker_similarity: Raw Layer 2 similarity, in [-1, 1].
 
     Returns:
         RiskResult(risk_score, risk_level)

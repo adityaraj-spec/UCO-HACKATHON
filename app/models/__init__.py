@@ -11,10 +11,13 @@ from app.models.user import User
 from app.models.voiceprint import Voiceprint
 from app.models.verification_log import VerificationLog
 from app.models.risk_log import RiskLog
+from app.models.kyc_enrollment import KYCEnrollmentSession, VoiceChallenge
 
 __all__ = [
     "User",
     "Voiceprint",
     "VerificationLog",
     "RiskLog",
+    "KYCEnrollmentSession",
+    "VoiceChallenge",
 ]

@@ -1,0 +1,15 @@
+{
+  "recommendation": "inconclusive",
+  "rationale": "Both model families must be compared on genuine acceptance and same-cohort false accepts.",
+  "evidence": {
+    "baseline_avg_genuine_verified_rate_percent": 51.875,
+    "trained_avg_genuine_verified_rate_percent": 47.5,
+    "baseline_avg_same_cohort_far_percent": 1.0738886631225213,
+    "trained_avg_same_cohort_far_percent": 0.995828043655353
+  },
+  "source_artifacts": {
+    "summary_csv": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\snorm_real_eval_final.csv",
+    "trial_scores_csv": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\snorm_real_trial_scores.csv"
+  },
+  "config_modified": false
+}

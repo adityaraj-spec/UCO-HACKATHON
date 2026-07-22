@@ -123,21 +123,40 @@ class ECAPAService:
             with torch.no_grad():
                 embedding_tensor = model.encode_batch(waveform)
 
-            embedding = embedding_tensor.squeeze().detach().cpu().numpy()
-            embedding = np.asarray(embedding, dtype=np.float32).flatten()
+            raw_embedding = embedding_tensor.squeeze().detach().cpu().numpy()
+            raw_embedding = np.asarray(raw_embedding, dtype=np.float32).flatten()
 
-            if embedding.shape[0] != settings.EMBEDDING_DIM:
+            raw_norm = float(np.linalg.norm(raw_embedding))
+
+            if raw_embedding.shape[0] != settings.EMBEDDING_DIM:
                 log.warning(
-                    f"Unexpected embedding dimension {embedding.shape[0]} "
+                    f"Unexpected embedding dimension {raw_embedding.shape[0]} "
                     f"(expected {settings.EMBEDDING_DIM}) for '{audio_file}'"
                 )
 
-            return embedding
+            # L2 normalize
+            norm_val = np.linalg.norm(raw_embedding)
+            normalized_embedding = (raw_embedding / max(norm_val, 1e-6)).astype(np.float32)
+
+            return normalized_embedding
         except EmbeddingExtractionError:
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception(f"Embedding extraction failed for '{audio_file}'")
             raise EmbeddingExtractionError(audio_file, str(exc)) from exc
+
+    def extract_embedding_with_confidence(self, audio_file: str) -> tuple[np.ndarray, float, float]:
+        """
+        Extract embedding and compute model-derived confidence score from raw L2 norm.
+
+        Returns:
+            (normalized_embedding, confidence_score, raw_l2_norm)
+        """
+        embedding = self.extract_embedding(audio_file)
+        raw_norm = float(np.linalg.norm(embedding))
+        # Compute confidence score normalized to [0.0, 1.0]
+        confidence = float(np.clip(raw_norm / settings.TARGET_NORM_SCALE, 0.1, 1.0))
+        return embedding, confidence, raw_norm
 
     # ------------------------------------------------------------------
     # Enrollment
@@ -188,8 +207,8 @@ class ECAPAService:
         self, audio_file: str, enrolled_embedding: np.ndarray | list[float]
     ) -> float:
         """
-        Compute the cosine similarity between a live audio sample and a
-        stored (enrolled) voiceprint.
+        Legacy helper that computes cosine similarity between a live audio
+        sample and a stored voiceprint.
 
         Args:
             audio_file: Path to the live/incoming audio file.
@@ -197,10 +216,9 @@ class ECAPAService:
                                  claimed user.
 
         Returns:
-            Cosine similarity score in the range [-1.0, 1.0]. Values close
-            to 1.0 indicate the same speaker; the configured
-            `SIMILARITY_THRESHOLD` (default 0.65) determines the pass/fail
-            cutoff.
+            Cosine similarity score in the range [-1.0, 1.0]. The live
+            verification endpoint does not use this helper for the returned
+            identity decision; it uses BioHash similarity plus s-norm.
         """
         live_embedding = self.extract_embedding(audio_file)
         enrolled = np.asarray(enrolled_embedding, dtype=np.float32)

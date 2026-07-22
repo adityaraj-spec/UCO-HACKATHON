@@ -1,0 +1,13 @@
+{
+  "status": "success",
+  "dataset": "ai4bharat/Svarah",
+  "epochs": 4,
+  "total_speakers": 50,
+  "train_speakers": 40,
+  "val_speakers": 10,
+  "final_train_loss": 23.4861,
+  "final_train_acc_percent": 5.83,
+  "final_val_acc_percent": 100.0,
+  "training_time_seconds": 267.79,
+  "checkpoint_directory": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\model_checkpoints\\trained_ecapa"
+}

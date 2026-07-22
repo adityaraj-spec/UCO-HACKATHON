@@ -1,0 +1,9 @@
+model,condition,eer_percent,threshold_at_eer
+baseline,clean,2.500000,0.494968
+baseline,telephone_mild,5.000000,0.422580
+baseline,telephone_moderate,5.000000,0.452596
+baseline,telephone_severe,7.875000,0.371408
+trained,clean,2.500000,0.511055
+trained,telephone_mild,4.625000,0.440485
+trained,telephone_moderate,5.250000,0.454992
+trained,telephone_severe,10.000000,0.388253

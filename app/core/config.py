@@ -47,17 +47,57 @@ class Settings(BaseSettings):
     )
 
     # --- ML / SpeechBrain ---
-    ECAPA_MODEL_SOURCE: str = "speechbrain/spkrec-ecapa-voxceleb"
-    ECAPA_MODEL_SAVE_DIR: str = "./pretrained_models/ecapa"
+    ECAPA_MODEL_SOURCE: str = "evaluation/model_checkpoints/trained_ecapa"
+    ECAPA_MODEL_SAVE_DIR: str = "evaluation/model_checkpoints/trained_ecapa"
     EMBEDDING_DIM: int = 192
     TARGET_SAMPLE_RATE: int = 16000
 
-    # --- Verification ---
-    SIMILARITY_THRESHOLD: float = 0.65
+    # --- Verification & Fallback Thresholds ---
+    SIMILARITY_THRESHOLD: float = 0.63977
+    STEP_UP_LOWER_BOUND: float = 0.45499
+    HARD_FAIL_THRESHOLD: float = 0.18061
     MIN_ENROLLMENT_RECORDINGS: int = 3
+
+    # --- Adaptive Score Normalisation (s-norm) ---
+    SNORM_PASS_THRESHOLD: float = 3.0
+    SNORM_STEP_UP_THRESHOLD: float = 1.5
+    SNORM_HARD_FAIL_THRESHOLD: float = 0.0
+    IMPOSTOR_COHORT_SIZE: int = 200
+
+    # --- BioHashing (Cancellable Biometrics) ---
+    BIOHASH_SEED_KEY: str = "PhaseGuardSecretKey2026"
+    BIOHASH_DIM: int = 256
+
+    # --- FAISS Scalable Vector Search ---
+    FAISS_INDEX_PATH: str = "./data/faiss_ivfpq.index"
+    FAISS_NPROBE: int = 32
+    FAISS_M: int = 16
+    FAISS_NBITS: int = 8
+
+    # --- Audio Preprocessing & Quality Gating ---
+    ENABLE_AUDIO_QUALITY_CHECK: bool = True
+    MIN_SPEECH_DURATION_SEC: float = 2.0
+    EMBEDDING_CONFIDENCE_THRESHOLD: float = 0.5
+    TARGET_NORM_SCALE: float = 10.0
+
+    # --- Liveness & Replay Protection ---
+    ENABLE_CHALLENGE_ASR: bool = True
+    ENABLE_PERCEPTUAL_REPLAY_CHECK: bool = True
+    CHALLENGE_TTL_SEC: int = 60
+    AUDIO_HASH_TTL_SEC: int = 86400  # 24 hours
+
+    # --- Observability & Telemetry ---
+    ENABLE_OPENTELEMETRY: bool = True
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"
 
     # --- Risk Engine ---
     LAYER1_FRAUD_THRESHOLD: float = 0.70
+    LAYER1_LIVENESS_CHECK_ENABLED: bool = True
+
+    # --- Redis ---
+    REDIS_HOST: str = "127.0.0.1"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
 
     # --- File handling ---
     TEMP_UPLOAD_DIR: str = "./data/temp_uploads"

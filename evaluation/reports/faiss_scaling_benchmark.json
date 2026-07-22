@@ -1,0 +1,6 @@
+{
+  "status": "complete",
+  "rows_csv": "evaluation\\reports\\faiss_scaling_benchmark.csv",
+  "blockers": [],
+  "note": "Local synthetic-vector benchmark on this workstation; not a production guarantee."
+}

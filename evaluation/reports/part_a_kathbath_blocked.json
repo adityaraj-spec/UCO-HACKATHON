@@ -1,0 +1,7 @@
+{
+  "status": "blocked",
+  "reason": "ModelLoadError",
+  "detail": "Failed to load speaker verification model: [WinError 2] The system cannot find the file specified",
+  "no_thresholds_written": true,
+  "config_modified": false
+}

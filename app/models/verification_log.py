@@ -4,7 +4,7 @@ app/models/verification_log.py
 SQLAlchemy ORM model for the `verification_logs` table.
 
 Each row records the outcome of a single Layer 2 (speaker verification)
-attempt: the computed cosine similarity score and the resulting decision.
+attempt: the raw Layer 2 similarity score and the resulting identity decision.
 """
 
 import uuid
@@ -36,7 +36,7 @@ class VerificationLog(Base):
     )
     similarity_score: Mapped[float] = mapped_column(Float, nullable=False)
 
-    # "verified" | "mismatch"
+    # "verified" | "step_up" | "mismatch" | "REPLAY_DETECTED"
     decision: Mapped[str] = mapped_column(String(32), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

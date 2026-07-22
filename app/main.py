@@ -43,6 +43,7 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.ml.ecapa_service import get_ecapa_service
+from app.services.enrollment_service import LAYER1_LIVENESS_DISABLED_WARNING
 from app.utils.exceptions import PhaseGuardError
 
 settings = get_settings()
@@ -61,13 +62,25 @@ async def lifespan(app: FastAPI):
     even if the model download fails in a constrained environment.
     """
     log.info(f"Starting {settings.APP_NAME} (env={settings.APP_ENV})")
+    # Pre-load ECAPA model and DiarisationService singleton
     try:
         get_ecapa_service().load_model()
+        from app.services.diarisation_service import get_diarisation_service
+        get_diarisation_service()
     except Exception as exc:  # noqa: BLE001
         log.error(
             f"ECAPA-TDNN model failed to preload at startup: {exc}. "
             "It will be lazily loaded on first request."
         )
+
+    # Sync FAISS index with database
+    from app.database.session import AsyncSessionLocal
+    from app.services.faiss_service import faiss_service
+    async with AsyncSessionLocal() as session:
+        try:
+            await faiss_service.sync_with_db(session)
+        except Exception as exc:
+            log.error(f"FAISS index sync failed at startup: {exc}")
 
     yield
 
@@ -80,8 +93,8 @@ app = FastAPI(
         "Production backend for PhaseGuard's Layer 2 identity-verification "
         "engine. Enrolls customer voiceprints using SpeechBrain's "
         "ECAPA-TDNN model and verifies live audio against stored "
-        "voiceprints using cosine similarity, feeding results into the "
-        "PhaseGuard Risk Engine."
+        "voiceprints using BioHash similarity and s-norm, feeding raw "
+        "similarity into the PhaseGuard Risk Engine."
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -123,17 +136,51 @@ async def root() -> dict:
 async def health() -> dict:
     """
     Reports basic service health, including whether the ECAPA-TDNN model is
-    currently loaded in memory.
+    currently loaded in memory. `similarity_threshold` is the risk-engine
+    similarity threshold, not the live identity decision cutoff.
     """
     ecapa = get_ecapa_service()
     model_loaded = ecapa._model is not None  # noqa: SLF001 - internal status check
 
-    return {
+    payload = {
         "status": "ok",
         "model_loaded": model_loaded,
         "embedding_dim": settings.EMBEDDING_DIM,
         "similarity_threshold": settings.SIMILARITY_THRESHOLD,
         "layer1_fraud_threshold": settings.LAYER1_FRAUD_THRESHOLD,
+        "layer1_liveness_check_enabled": settings.LAYER1_LIVENESS_CHECK_ENABLED,
+    }
+    if not settings.LAYER1_LIVENESS_CHECK_ENABLED:
+        payload["warning"] = LAYER1_LIVENESS_DISABLED_WARNING
+    return payload
+
+
+# OpenTelemetry Setup
+from app.utils.telemetry import setup_opentelemetry
+setup_opentelemetry(app)
+
+# Prometheus Metrics Instrumentation
+try:
+    from prometheus_fastapi_instrumentator import Instrumentator
+    Instrumentator().instrument(app).expose(app)
+except Exception as exc:
+    log.warning("Could not initialize Prometheus Instrumentator: %s", exc)
+
+
+@app.get("/healthz", tags=["Health"], summary="Comprehensive Kubernetes healthz probe")
+async def healthz() -> dict:
+    """Verifies DB, Redis, and FAISS connectivity for container orchestration health checks."""
+    from app.services.redis_service import redis_service
+    from app.services.faiss_service import faiss_service
+
+    redis_ok = redis_service._ensure_connection()
+    faiss_ok = faiss_service.index is not None and hasattr(faiss_service.index, "ntotal")
+
+    return {
+        "status": "healthy" if (redis_ok and faiss_ok) else "degraded",
+        "redis_connected": redis_ok,
+        "faiss_indexed": faiss_ok,
+        "faiss_total": faiss_service.index.ntotal if faiss_ok else 0,
     }
 
 

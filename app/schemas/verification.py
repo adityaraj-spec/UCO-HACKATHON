@@ -29,12 +29,23 @@ class VerificationResult(BaseModel):
     user_id: uuid.UUID
     similarity_score: float
     verified: bool
-    decision: str  # "verified" | "mismatch"
+    decision: str  # "verified" | "step_up" | "mismatch" | "REPLAY_DETECTED" | transaction decisions
 
-    # Risk engine output (Layer1 + Layer2 combined)
+    # Risk engine output (Layer 1 + raw Layer 2 similarity combined)
     layer1_score: float
     risk_score: float
     risk_level: str  # "CLEAN" | "FRAUD_ALERT"
+    stage_timings_ms: dict[str, float] | None = None
+
+    # Optional transaction-aware controls. For legacy identity-only requests,
+    # these remain None/False and existing callers can ignore them.
+    transaction_type: str | None = None
+    transaction_amount: float | None = None
+    transaction_tier: str | None = None
+    phrase_match: bool | None = None
+    biometric_verified: bool | None = None
+    otp_required: bool = False
+    final_authorized: bool | None = None
 
 
 class VerificationLogRead(BaseModel):
@@ -47,3 +58,12 @@ class VerificationLogRead(BaseModel):
     similarity_score: float
     decision: str
     created_at: datetime
+
+
+class SpeakerMatch(BaseModel):
+    user_id: uuid.UUID
+    similarity_score: float
+
+
+class IdentificationResult(BaseModel):
+    matches: list[SpeakerMatch]

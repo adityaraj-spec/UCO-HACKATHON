@@ -1,0 +1,75 @@
+{
+  "source_artifacts": {
+    "scores_csv": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\all_trial_scores_kathbath.csv",
+    "eer_csv": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\eer_report_kathbath.csv",
+    "cohort_far_csv": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\cohort_far_kathbath.csv",
+    "det_curve_png": "C:\\Users\\LENOVO\\OneDrive\\Desktop\\Final_layer2\\UCO-HACKATHON\\evaluation\\reports\\det_curve_kathbath.png"
+  },
+  "impostor_distribution_all_conditions": {
+    "max": 0.6197745971842649,
+    "p95": 0.45154835596728704,
+    "p99": 0.5303999550912323
+  },
+  "same_cohort_impostor_distribution_all_conditions": {
+    "max": 0.6197745971842649,
+    "p95": 0.45939785235146957,
+    "p99": 0.5365464189785033
+  },
+  "clean_genuine_distribution": {
+    "p1": 0.4830733812789616,
+    "p5": 0.7006817392286886,
+    "p25": 0.802156388238642,
+    "p50": 0.8305837486895722
+  },
+  "eer_crossover_points": {
+    "clean": {
+      "eer_percent": 2.5,
+      "threshold_at_eer": 0.5110547740972458
+    },
+    "telephone_mild": {
+      "eer_percent": 4.625,
+      "threshold_at_eer": 0.4404849033892963
+    },
+    "telephone_moderate": {
+      "eer_percent": 5.250000000000001,
+      "threshold_at_eer": 0.4549918188860135
+    },
+    "telephone_severe": {
+      "eer_percent": 10.0,
+      "threshold_at_eer": 0.38825257156724696
+    }
+  },
+  "recommended_thresholds": {
+    "PASS_THRESHOLD": {
+      "value": 0.6397745971842649,
+      "evidence": "Set above the observed maximum impostor score across all conditions.",
+      "observed_impostor_max": 0.6197745971842649,
+      "margin": 0.020000000000000018
+    },
+    "STEP_UP_LOWER_BOUND": {
+      "value": 0.4549918188860135,
+      "evidence": "Anchored to telephone_moderate EER and cross-checked against moderate genuine p5.",
+      "telephone_moderate_eer_threshold": 0.4549918188860135,
+      "telephone_moderate_genuine_p5": 0.4544131122007415
+    },
+    "HARD_FAIL_THRESHOLD": {
+      "value": 0.18061800091716157,
+      "evidence": "Set below the observed minimum genuine score in telephone_moderate/severe.",
+      "harsh_genuine_p1": 0.1940748895068502,
+      "harsh_genuine_min": 0.18161800091716157,
+      "margin_below_min": 0.0010000000000000009
+    }
+  },
+  "clean_genuine_step_up_friction_at_pass_threshold": {
+    "count_below_pass": 1,
+    "total_clean_genuine": 40,
+    "percent": 2.5
+  },
+  "same_cohort_far_at_pass_threshold": {
+    "threshold": 0.6397745971842649,
+    "false_accepts": 0,
+    "total_same_cohort_impostors": 1307,
+    "far_percent": 0.0
+  },
+  "config_modified": false
+}

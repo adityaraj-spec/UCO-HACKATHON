@@ -1,0 +1,9 @@
+model,condition,threshold,same_cohort_impostor_trials,false_accepts,far_percent,ci95_low_percent,ci95_high_percent,trained_worse_than_baseline
+baseline,clean,0.650000,319,0,0.000000,0.000000,1.189890,
+baseline,telephone_mild,0.650000,325,0,0.000000,0.000000,1.168180,
+baseline,telephone_moderate,0.650000,334,0,0.000000,0.000000,1.137060,
+baseline,telephone_severe,0.650000,329,0,0.000000,0.000000,1.154141,
+trained,clean,0.650000,319,0,0.000000,0.000000,1.189890,false
+trained,telephone_mild,0.650000,325,0,0.000000,0.000000,1.168180,false
+trained,telephone_moderate,0.650000,334,0,0.000000,0.000000,1.137060,false
+trained,telephone_severe,0.650000,329,0,0.000000,0.000000,1.154141,false

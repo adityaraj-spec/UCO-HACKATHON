@@ -1,0 +1,5 @@
+{
+  "status": "blocked",
+  "reason": "All benchmark requests failed; verify API is not reachable or has no valid enrolled user/audio context.",
+  "requires": "Running API, enrolled user_id, and representative audio file."
+}

@@ -1,0 +1,8 @@
+Kathbath no-overlap check
+Kathbath selected speakers: 40
+Svarah speaker identifiers found locally: 3233
+Exact identifier overlaps: 0
+Result: zero exact speaker identifier overlap.
+
+Available Kathbath speaker metadata fields in this run: gender, lang, speaker_id
+Note: this checks the speaker identifiers available in local artifacts. Kathbath does not expose real names in the dataset rows used here.

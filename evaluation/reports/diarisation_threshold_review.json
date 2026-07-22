@@ -1,0 +1,12 @@
+{
+  "status": "blocked_for_recalibration",
+  "threshold_under_review": "app/services/diarisation_service.py speaker-cluster similarity >= 0.65",
+  "reason": "The corrected S-Norm evaluation harness scores pre-segmented Kathbath trial files with file-level embeddings and does not emit frame/window cluster labels or target-speaker diarisation accuracy. It therefore cannot identify an evidence-backed replacement for the diarisation clustering threshold.",
+  "evidence_used": [
+    "evaluation/reports/snorm_real_eval_final.csv",
+    "evaluation/reports/snorm_real_trial_scores.csv"
+  ],
+  "finding": "No threshold change recommended from the available artifacts.",
+  "needed_next_artifact": "A diarisation-specific validation set with multi-speaker audio, target-speaker labels, per-window cluster assignments, and target-speaker extraction success/failure by telephone condition/accent cohort.",
+  "config_modified": false
+}

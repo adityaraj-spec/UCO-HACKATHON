@@ -41,7 +41,11 @@ class UserRepository:
             .options(selectinload(User.voiceprint))
             .where(User.id == user_id)
         )
-        return result.scalar_one_or_none()
+        user = result.scalar_one_or_none()
+        if user and user.voiceprint:
+            from app.repositories.voiceprint_repository import VoiceprintRepository
+            VoiceprintRepository(self.session)._attach_plaintext_voiceprint(user.voiceprint)
+        return user
 
     async def get_by_email(self, email: str) -> User | None:
         """Fetch a user by unique email address, or None if not found."""

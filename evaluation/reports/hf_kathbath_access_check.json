@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "hf_token_loaded": true,
+  "dataset": "ai4bharat/Kathbath",
+  "config": "hindi",
+  "split": "valid",
+  "checked_at_unix": 1784668093.0204055,
+  "sample_fields": [
+    "audio_filepath",
+    "duration",
+    "fname",
+    "gender",
+    "lang",
+    "speaker_id",
+    "text"
+  ],
+  "sample_speaker_id_present": true,
+  "sample_gender_present": true,
+  "sample_language": "hi"
+}
