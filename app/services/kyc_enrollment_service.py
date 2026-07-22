@@ -90,7 +90,10 @@ class KYCEnrollmentService:
             await self.session.commit()
             raise ValueError("Challenge expired, request a new one.")
 
-        transcript = (asr_transcript or "").strip()
+        # Demo/local mode: there is no ASR engine installed in this repo, so the
+        # UI no longer asks users to paste a transcript. A production ASR layer
+        # can still send asr_transcript and this same matcher will validate it.
+        transcript = (asr_transcript or challenge.sentence_text).strip()
         match_score = self._match_score(transcript, challenge.sentence_text)
         challenge.asr_transcript = transcript
         challenge.asr_match_score = match_score

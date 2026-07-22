@@ -35,7 +35,7 @@ with flow_col:
     st.subheader("Current flow")
     st.write("1. Start Voice KYC with the customer's phone number.")
     st.write("2. Read two fresh server-generated sentences, one per attempt.")
-    st.write("3. Submit each recording with its ASR transcript before expiry.")
+    st.write("3. Submit each audio recording before expiry.")
     st.write("4. Enrol only after both attempts pass, then continue to verification/admin approval.")
 
 st.divider()

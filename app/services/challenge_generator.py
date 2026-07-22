@@ -1,41 +1,41 @@
 """
 Dynamic spoken-sentence challenge generator for Voice KYC.
 
-Sentences are short and banking-themed so ASR has a fair target while each
-challenge remains fresh enough to make pre-recorded replay impractical.
+Sentences are transaction-related banking phrases so voice enrollment and
+liveness checks mimic actual voice banking transaction approvals.
 """
 
 import secrets
 
-SUBJECTS = [
-    "my banking assistant",
-    "the secure branch",
-    "our account officer",
-    "the mobile teller",
-    "my UCO account",
-    "the customer desk",
+TRANSACTION_ACTIONS = [
+    "I authorize a fund transfer of",
+    "Confirm payment of",
+    "Approve transfer of",
+    "Authorize instant money transfer of",
+    "Confirm online bill payment of",
+    "I request transfer of",
+    "Verify UCO bank transaction of",
+    "Authorize money transfer of",
 ]
-VERBS = [
-    "confirms",
-    "verified",
-    "recorded",
-    "approved",
-    "checked",
-    "reported",
+
+TRANSACTION_TARGETS = [
+    "rupees for transaction number",
+    "rupees from my UCO account number",
+    "rupees to payee account number",
+    "rupees for reference number",
+    "rupees under transaction number",
+    "rupees from savings account number",
+    "rupees for order number",
+    "rupees to beneficiary number",
 ]
-OBJECTS = [
-    "a safe login",
-    "the pending request",
-    "a valid session",
-    "the account update",
-    "a stable transaction",
-    "the voice check",
-]
+
+AMOUNTS = [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000, 7500, 10000]
 
 
 def generate_challenge_sentence() -> str:
-    subject = secrets.choice(SUBJECTS)
-    verb = secrets.choice(VERBS)
-    obj = secrets.choice(OBJECTS)
+    action = secrets.choice(TRANSACTION_ACTIONS)
+    target = secrets.choice(TRANSACTION_TARGETS)
+    amount = secrets.choice(AMOUNTS)
     number = secrets.randbelow(900) + 100
-    return f"{subject.capitalize()} {verb} {obj} number {number}."
+    return f"{action} {amount} {target} {number}."
+

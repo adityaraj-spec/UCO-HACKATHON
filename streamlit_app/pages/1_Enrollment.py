@@ -33,6 +33,8 @@ def _reset_session() -> None:
         "kyc_attempt_1_ok",
         "kyc_attempt_2_ok",
         "kyc_enrolment_done",
+        "kyc_audio_nonce_1",
+        "kyc_audio_nonce_2",
     ]:
         st.session_state.pop(key, None)
 
@@ -48,12 +50,13 @@ def _remaining_seconds(expires_at: str | None) -> int:
 
 
 def _audio_capture(attempt_no: int):
+    nonce = st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0)
     if hasattr(st, "audio_input"):
-        return st.audio_input("Record the sentence", key=f"kyc_audio_{attempt_no}")
+        return st.audio_input("Record the sentence", key=f"kyc_audio_{attempt_no}_{nonce}")
     return st.file_uploader(
         "Upload a recording of the sentence",
         type=["wav", "mp3", "m4a", "ogg", "flac"],
-        key=f"kyc_audio_upload_{attempt_no}",
+        key=f"kyc_audio_upload_{attempt_no}_{nonce}",
     )
 
 
@@ -62,8 +65,20 @@ def _attempt_panel(attempt_no: int) -> None:
     challenge_key = f"kyc_challenge_{attempt_no}"
     attempt_ok_key = f"kyc_attempt_{attempt_no}_ok"
     challenge = _state(challenge_key)
+    attempt_ok = _state(attempt_ok_key, False)
 
     st.subheader(f"Attempt {attempt_no}")
+
+    if attempt_ok:
+        st.success(f"Attempt {attempt_no} completed successfully!")
+        if st.button(f"Reattempt Attempt {attempt_no}", key=f"kyc_reattempt_{attempt_no}"):
+            st.session_state[attempt_ok_key] = False
+            st.session_state[challenge_key] = None
+            st.session_state[f"kyc_audio_nonce_{attempt_no}"] = (
+                st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0) + 1
+            )
+            st.rerun()
+        return
 
     cols = st.columns([1, 1, 4])
     with cols[0]:
@@ -72,6 +87,9 @@ def _attempt_panel(attempt_no: int) -> None:
             if ok:
                 st.session_state[challenge_key] = payload
                 st.session_state[attempt_ok_key] = False
+                st.session_state[f"kyc_audio_nonce_{attempt_no}"] = (
+                    st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0) + 1
+                )
                 st.rerun()
             else:
                 st.error(payload)
@@ -81,6 +99,9 @@ def _attempt_panel(attempt_no: int) -> None:
             if ok:
                 st.session_state[challenge_key] = payload
                 st.session_state[attempt_ok_key] = False
+                st.session_state[f"kyc_audio_nonce_{attempt_no}"] = (
+                    st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0) + 1
+                )
                 st.rerun()
             else:
                 st.error(payload)
@@ -91,50 +112,71 @@ def _attempt_panel(attempt_no: int) -> None:
 
     remaining = _remaining_seconds(challenge.get("expires_at"))
     if remaining <= 0:
-        st.error("This sentence expired. Request a new sentence.")
+        st.error("This sentence has expired.")
+        if st.button(f"Reattempt with fresh sentence", key=f"kyc_expired_reattempt_{attempt_no}"):
+            ok, payload = api_client.get_challenge_sentence(session_id, attempt_no)
+            if ok:
+                st.session_state[challenge_key] = payload
+                st.session_state[attempt_ok_key] = False
+                st.session_state[f"kyc_audio_nonce_{attempt_no}"] = (
+                    st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0) + 1
+                )
+                st.rerun()
+            else:
+                st.error(payload)
         return
 
-    st.markdown("Please read this sentence aloud:")
+    st.markdown("Please read this banking transaction sentence aloud:")
     st.info(challenge["sentence_text"])
     st.caption(f"Expires in about {remaining} seconds.")
 
-    audio_file = _audio_capture(attempt_no)
-    transcript = st.text_input(
-        "ASR transcript",
-        key=f"kyc_transcript_{attempt_no}",
-        placeholder="Paste the speech-to-text transcript for this demo attempt",
-    )
+    control_cols = st.columns([1, 4])
+    with control_cols[0]:
+        if st.button("Re-record audio", key=f"kyc_rerecord_{attempt_no}"):
+            st.session_state[f"kyc_audio_nonce_{attempt_no}"] = (
+                st.session_state.get(f"kyc_audio_nonce_{attempt_no}", 0) + 1
+            )
+            st.rerun()
+    with control_cols[1]:
+        audio_file = _audio_capture(attempt_no)
 
     if st.button(
         f"Submit attempt {attempt_no}",
         type="primary",
-        disabled=not (audio_file and transcript),
+        disabled=not audio_file,
         key=f"kyc_submit_attempt_{attempt_no}",
     ):
         audio_bytes = audio_file.getvalue()
+        if not audio_bytes:
+            st.error("No audio recorded. Please record your voice and submit again.")
+            return
         mime_type = getattr(audio_file, "type", None) or "audio/wav"
         filename = getattr(audio_file, "name", f"attempt_{attempt_no}.wav")
-        with st.spinner("Checking sentence match and extracting voice embedding..."):
+        with st.spinner("Validating audio recording and extracting voice embedding..."):
             ok, payload = api_client.submit_attempt(
                 session_id=session_id,
                 attempt_no=attempt_no,
                 audio_filename=filename,
                 audio_bytes=audio_bytes,
                 mime_type=mime_type,
-                asr_transcript=transcript,
             )
 
         if not ok:
-            st.error(payload)
+            st.error(f"Submit error: {payload}")
+            st.session_state[challenge_key] = None
+            if st.button(f"Reattempt recording", key=f"kyc_error_reattempt_{attempt_no}"):
+                st.rerun()
             return
         if payload.get("success"):
             st.session_state[attempt_ok_key] = True
-            st.success(payload["message"])
-            st.metric("ASR match score", f"{payload['asr_match_score']:.2f}")
+            st.success(payload.get("message", f"Attempt {attempt_no} passed!"))
+            st.rerun()
         else:
             st.session_state[attempt_ok_key] = False
-            st.error(payload.get("message", "Attempt failed. Request a new sentence."))
-            st.metric("ASR match score", f"{payload.get('asr_match_score', 0):.2f}")
+            st.session_state[challenge_key] = None
+            st.error(payload.get("message", "Attempt failed. Please reattempt with a new sentence."))
+            if st.button(f"Reattempt recording", key=f"kyc_fail_reattempt_{attempt_no}"):
+                st.rerun()
 
 
 _state("kyc_attempt_1_ok", False)

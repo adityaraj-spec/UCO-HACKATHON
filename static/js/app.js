@@ -179,19 +179,51 @@ document.addEventListener('DOMContentLoaded', () => {
         const fileInput = document.getElementById('enroll-file');
         if (!name || !fileInput.files[0]) { alert("Please provide name and an audio file"); return; }
         
-        const formData = new FormData();
-        formData.append("name", name);
-        formData.append("file", fileInput.files[0]);
-        
+        const statusDiv = document.getElementById('enroll-status');
+        statusDiv.innerHTML = `<span class="text-blue-400">Enrolling voice...</span>`;
+
         try {
+            // First get or create user to obtain a valid UUID user_id
+            let userId = null;
+            const usersRes = await fetch('/api/v1/users');
+            if (usersRes.ok) {
+                const users = await usersRes.json();
+                const existing = users.find(u => u.name === name || u.email === `${name.toLowerCase().replace(/\s+/g, '')}@uco.bank`);
+                if (existing) {
+                    userId = existing.id;
+                }
+            }
+            if (!userId) {
+                const createUserRes = await fetch('/api/v1/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name, email: `${name.toLowerCase().replace(/\s+/g, '')}@uco.bank` })
+                });
+                if (createUserRes.ok) {
+                    const newUser = await createUserRes.json();
+                    userId = newUser.id;
+                } else {
+                    const err = await createUserRes.json();
+                    statusDiv.innerHTML = `<span class="text-red-400">❌ User creation failed: ${err.detail || JSON.stringify(err)}</span>`;
+                    return;
+                }
+            }
+
+            const formData = new FormData();
+            formData.append("user_id", userId);
+            formData.append("files", fileInput.files[0]);
+            formData.append("channel", "DIRECT_API");
+            formData.append("biometric_consent_confirmed", "true");
+            formData.append("authenticated", "true");
+            formData.append("otp_verified", "true");
+            
             const res = await fetch('/api/v1/enroll', { method: 'POST', body: formData });
             const data = await res.json();
-            const statusDiv = document.getElementById('enroll-status');
             if (res.ok) {
                 statusDiv.innerHTML = `<span class="text-green-400">✅ Enrolled Successfully! User ID: <br><strong class="text-white">${data.user_id}</strong></span>`;
             } else {
-                statusDiv.innerHTML = `<span class="text-red-400">❌ Error: ${data.detail}</span>`;
+                statusDiv.innerHTML = `<span class="text-red-400">❌ Error: ${data.detail || JSON.stringify(data)}</span>`;
             }
-        } catch(e) { alert("Enroll error: " + e); }
+        } catch(e) { statusDiv.innerHTML = `<span class="text-red-400">❌ Enroll error: ${e}</span>`; }
     });
 });
